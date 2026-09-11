@@ -3618,6 +3618,8 @@ git commit -m "feat(backend): router CRUD employee, KPI, task va exception handl
 ```python
 import pytest
 
+from app.models import KpiUpdateSuggestion
+
 
 @pytest.fixture
 def seeded(api_client):
@@ -3687,15 +3689,24 @@ def test_get_unknown_report_returns_404(api_client):
     assert api_client.get("/api/reports/999999").status_code == 404
 
 
-def test_reextract_replaces_pending_suggestions(api_client, seeded):
+def test_reextract_replaces_pending_suggestions(api_client, db_session, seeded):
+    """Đánh dấu dòng cũ rồi kiểm dòng còn lại không mang dấu đó.
+
+    Không so sánh id: SQLite cấp lại khoá chính khi bảng bị xoá sạch, nên id
+    trùng nhau là bình thường và không chứng minh điều gì. `api_client` dùng
+    chung session với `db_session` nên đánh dấu được trực tiếp.
+    """
     created = submit(api_client, seeded["employee"]["id"]).json()
-    old_id = created["kpi_suggestions"][0]["id"]
+    old = db_session.get(KpiUpdateSuggestion, created["kpi_suggestions"][0]["id"])
+    old.evidence = "DAU VET CU"
+    db_session.commit()
 
     response = api_client.post(f"/api/reports/{created['id']}/extract")
 
     assert response.status_code == 200
-    new_id = response.json()["kpi_suggestions"][0]["id"]
-    assert new_id != old_id
+    suggestions = response.json()["kpi_suggestions"]
+    assert len(suggestions) == 1
+    assert suggestions[0]["evidence"] != "DAU VET CU"
 
 
 def test_failed_extraction_is_reported(api_client, seeded):
