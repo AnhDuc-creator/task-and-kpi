@@ -3588,7 +3588,7 @@ app.include_router(tasks.router)
 - [ ] **Step 8: Chạy test để xác nhận nó pass**
 
 Run: `pytest tests/test_api_crud.py tests/test_health.py -v`
-Expected: PASS (14 test)
+Expected: PASS (13 test — 12 trong test_api_crud.py + 1 health)
 
 - [ ] **Step 9: Commit**
 
