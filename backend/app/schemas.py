@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.models import TaskStatus
+from app.models import ExtractionStatus, SuggestionStatus, TaskStatus
 
 
 class EmployeeCreate(BaseModel):
@@ -75,3 +75,58 @@ class TaskOut(BaseModel):
     assignee_id: int
     status: TaskStatus
     completed_at: datetime | None
+
+
+class ReportCreate(BaseModel):
+    employee_id: int
+    week_start: date
+    raw_text: str = Field(min_length=1)
+
+
+class KpiSuggestionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    report_id: int
+    suggested_kpi_id: int | None
+    suggested_delta: float
+    evidence: str
+    status: SuggestionStatus
+    final_kpi_id: int | None
+    final_delta: float | None
+    review_note: str | None
+
+
+class TaskSuggestionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    report_id: int
+    suggested_task_id: int | None
+    raw_text: str
+    status: SuggestionStatus
+    final_task_id: int | None
+
+
+class BlockerOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    report_id: int
+    description: str
+    related_kpi_id: int | None
+
+
+class ReportOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    employee_id: int
+    week_start: date
+    raw_text: str
+    extraction_status: ExtractionStatus
+    extraction_error: str | None
+    provider_name: str | None
+    kpi_suggestions: list[KpiSuggestionOut]
+    task_suggestions: list[TaskSuggestionOut]
+    blockers: list[BlockerOut]
