@@ -76,19 +76,20 @@ export default function DashboardPage() {
 
       <section className="card">
         <h2>Vướng mắc gần đây</h2>
-        {recentBlockers.length === 0 ? (
-          <p className="muted" data-testid="dashboard-no-blocker">
-            Không có vướng mắc nào được ghi nhận.
-          </p>
-        ) : (
-          <ul>
-            {recentBlockers.map((blocker) => (
-              <li key={blocker.id} data-testid="dashboard-blocker">
-                {blocker.description} <span className="muted">(tuần {blocker.week_start})</span>
-              </li>
-            ))}
-          </ul>
-        )}
+        {!reports.loading &&
+          (recentBlockers.length === 0 ? (
+            <p className="muted" data-testid="dashboard-no-blocker">
+              Không có vướng mắc nào được ghi nhận.
+            </p>
+          ) : (
+            <ul>
+              {recentBlockers.map((blocker) => (
+                <li key={blocker.id} data-testid="dashboard-blocker">
+                  {blocker.description} <span className="muted">(tuần {blocker.week_start})</span>
+                </li>
+              ))}
+            </ul>
+          ))}
       </section>
     </div>
   )
