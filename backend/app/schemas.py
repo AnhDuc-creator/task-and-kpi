@@ -159,3 +159,18 @@ class KpiApproveIn(BaseModel):
 
 class TaskApproveIn(BaseModel):
     final_task_id: int
+
+
+class DashboardItemOut(BaseModel):
+    kpi_id: int
+    kpi_name: str
+    unit: str
+    owner_name: str
+    period_start: date
+    period_end: date
+    actual_value: float
+    target_value: float
+    expected_value: float
+    percent_complete: float
+    status: str
+    at_risk: bool
