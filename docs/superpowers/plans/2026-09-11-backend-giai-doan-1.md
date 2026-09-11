@@ -3075,6 +3075,7 @@ git commit -m "feat(backend): service dashboard tinh current_value tu so cai"
 ### Task 11: HTTP schemas và router CRUD (employees, kpis, tasks)
 
 **Files:**
+- Modify: `backend/app/errors.py` (thêm `InvalidInputError`)
 - Create: `backend/app/schemas.py`, `backend/app/routers/__init__.py`, `backend/app/routers/employees.py`, `backend/app/routers/kpis.py`, `backend/app/routers/tasks.py`
 - Modify: `backend/app/main.py` (gắn router và exception handler), `backend/tests/conftest.py` (thêm fixture `api_client`)
 - Test: `backend/tests/test_api_crud.py`
@@ -3083,7 +3084,18 @@ git commit -m "feat(backend): service dashboard tinh current_value tu so cai"
 - Consumes: `app.models.*`, `app.errors.*`, `app.db.get_db`
 - Produces: `app.schemas.EmployeeCreate` / `EmployeeOut`, `KpiCreate` / `KpiUpdate` / `KpiOut`, `TaskCreate` / `TaskUpdate` / `TaskOut`; router object `router` trong mỗi file `app/routers/*.py`; fixture pytest `api_client` (một `TestClient` đã ghi đè `get_db` sang SQLite in-memory)
 
-- [ ] **Step 1: Thêm fixture `api_client` vào `backend/tests/conftest.py`**
+- [ ] **Step 1: Thêm `InvalidInputError` vào cuối `backend/app/errors.py`**
+
+```python
+class InvalidInputError(Exception):
+    """Dữ liệu vào không hợp lệ mà Pydantic không tự bắt được (→ HTTP 422).
+
+    Dùng cho ràng buộc chỉ kiểm được sau khi trộn dữ liệu gửi lên với dữ liệu
+    đang lưu — ví dụ PATCH chỉ đổi `period_end` nhưng lại tạo ra kỳ ngược.
+    """
+```
+
+- [ ] **Step 2: Thêm fixture `api_client` vào `backend/tests/conftest.py`**
 
 ```python
 from fastapi.testclient import TestClient
@@ -3104,7 +3116,7 @@ def api_client(db_session):
         app.dependency_overrides.clear()
 ```
 
-- [ ] **Step 2: Viết test thất bại**
+- [ ] **Step 3: Viết test thất bại**
 
 `backend/tests/test_api_crud.py`:
 
@@ -3230,14 +3242,51 @@ def test_task_with_unknown_kpi_returns_404(api_client):
         json={"title": "x", "kpi_id": 999999, "assignee_id": employee["id"]},
     )
     assert response.status_code == 404
+
+
+def test_duplicate_email_returns_409(api_client):
+    """Email trùng là xung đột trạng thái, không phải lỗi máy chủ."""
+    create_employee(api_client)
+
+    response = api_client.post(
+        "/api/employees", json={"name": "Nguoi khac", "email": "a@example.com"}
+    )
+
+    assert response.status_code == 409
+    assert len(api_client.get("/api/employees").json()) == 1
+
+
+def test_patch_cannot_create_inverted_period(api_client):
+    """PATCH chỉ đổi một mốc vẫn phải bị chặn nếu tạo ra kỳ ngược."""
+    employee = create_employee(api_client)
+    kpi = create_kpi(api_client, employee["id"])  # 2026-01-01 .. 2026-12-31
+
+    response = api_client.patch(
+        f"/api/kpis/{kpi['id']}", json={"period_end": "2025-01-01"}
+    )
+
+    assert response.status_code == 422
+    unchanged = api_client.get(f"/api/kpis/{kpi['id']}").json()
+    assert unchanged["period_end"] == "2026-12-31"
+
+
+def test_patch_with_explicit_null_is_ignored(api_client):
+    """Gửi null tường minh cho một trường không nullable thì bỏ qua, không 500."""
+    employee = create_employee(api_client)
+    kpi = create_kpi(api_client, employee["id"])
+
+    response = api_client.patch(f"/api/kpis/{kpi['id']}", json={"target_value": None})
+
+    assert response.status_code == 200
+    assert response.json()["target_value"] == 100.0
 ```
 
-- [ ] **Step 3: Chạy test để xác nhận nó thất bại**
+- [ ] **Step 4: Chạy test để xác nhận nó thất bại**
 
 Run: `pytest tests/test_api_crud.py -v`
 Expected: FAIL — mọi request trả 404 vì router chưa được gắn
 
-- [ ] **Step 4: Viết `backend/app/schemas.py`**
+- [ ] **Step 5: Viết `backend/app/schemas.py`**
 
 ```python
 """Pydantic model cho HTTP API. Tách khỏi schema của tầng LLM."""
@@ -3326,7 +3375,7 @@ class TaskOut(BaseModel):
 > thêm phần nó thực sự dùng, để không có model nào nằm trong repo mà chưa có
 > endpoint nào gọi tới.
 
-- [ ] **Step 5: Tạo `backend/app/routers/__init__.py` rỗng, rồi viết ba router**
+- [ ] **Step 6: Tạo `backend/app/routers/__init__.py` rỗng, rồi viết ba router**
 
 `backend/app/routers/employees.py`:
 
@@ -3336,6 +3385,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.errors import ConflictError
 from app.models import Employee
 from app.schemas import EmployeeCreate, EmployeeOut
 
@@ -3349,6 +3399,11 @@ def list_employees(db: Session = Depends(get_db)) -> list[Employee]:
 
 @router.post("", response_model=EmployeeOut, status_code=status.HTTP_201_CREATED)
 def create_employee(payload: EmployeeCreate, db: Session = Depends(get_db)) -> Employee:
+    # Email là UNIQUE ở tầng DB. Kiểm trước để trả 409 thay vì để IntegrityError
+    # thoát ra thành 500.
+    existing = db.scalar(select(Employee).where(Employee.email == payload.email))
+    if existing is not None:
+        raise ConflictError(f"Email {payload.email} đã được dùng")
     employee = Employee(name=payload.name, email=payload.email)
     db.add(employee)
     db.commit()
@@ -3364,7 +3419,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.errors import NotFoundError
+from app.errors import InvalidInputError, NotFoundError
 from app.models import Employee, Kpi
 from app.schemas import KpiCreate, KpiOut, KpiUpdate
 
@@ -3402,8 +3457,22 @@ def update_kpi(
     kpi = db.get(Kpi, kpi_id)
     if kpi is None:
         raise NotFoundError(f"Không tìm thấy KPI {kpi_id}")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+
+    # exclude_none: PATCH là cập nhật một phần, không trường nào ở đây được
+    # phép thành null. Gửi null tường minh coi như không gửi.
+    for field, value in payload.model_dump(
+        exclude_unset=True, exclude_none=True
+    ).items():
         setattr(kpi, field, value)
+
+    # Kiểm sau khi đã trộn với giá trị đang lưu: PATCH chỉ đổi một trong hai
+    # mốc thời gian vẫn có thể tạo ra kỳ ngược. Kỳ ngược khiến
+    # compute_elapsed_ratio coi như kỳ dài 0 ngày và trả 1.0, làm KPI bị
+    # cảnh báo "có nguy cơ" oan.
+    if kpi.period_end < kpi.period_start:
+        db.rollback()
+        raise InvalidInputError("period_end phải không nhỏ hơn period_start")
+
     db.commit()
     db.refresh(kpi)
     return kpi
@@ -3449,14 +3518,16 @@ def update_task(
     task = db.get(Task, task_id)
     if task is None:
         raise NotFoundError(f"Không tìm thấy task {task_id}")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    for field, value in payload.model_dump(
+        exclude_unset=True, exclude_none=True
+    ).items():
         setattr(task, field, value)
     db.commit()
     db.refresh(task)
     return task
 ```
 
-- [ ] **Step 6: Cập nhật `backend/app/main.py`**
+- [ ] **Step 7: Cập nhật `backend/app/main.py`**
 
 ```python
 from collections.abc import AsyncIterator
@@ -3467,7 +3538,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.db import Base, engine
-from app.errors import ConflictError, NotFoundError
+from app.errors import ConflictError, InvalidInputError, NotFoundError
 from app.routers import employees, kpis, tasks
 
 
@@ -3499,6 +3570,11 @@ def handle_conflict(request: Request, exc: ConflictError) -> JSONResponse:
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
+@app.exception_handler(InvalidInputError)
+def handle_invalid_input(request: Request, exc: InvalidInputError) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -3509,15 +3585,15 @@ app.include_router(kpis.router)
 app.include_router(tasks.router)
 ```
 
-- [ ] **Step 7: Chạy test để xác nhận nó pass**
+- [ ] **Step 8: Chạy test để xác nhận nó pass**
 
 Run: `pytest tests/test_api_crud.py tests/test_health.py -v`
-Expected: PASS (10 test)
+Expected: PASS (14 test)
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add backend/app/schemas.py backend/app/routers backend/app/main.py backend/tests/conftest.py backend/tests/test_api_crud.py
+git add backend/app/errors.py backend/app/schemas.py backend/app/routers backend/app/main.py backend/tests/conftest.py backend/tests/test_api_crud.py
 git commit -m "feat(backend): router CRUD employee, KPI, task va exception handler"
 ```
 
