@@ -22,7 +22,7 @@ class EmployeeOut(BaseModel):
 
 class KpiCreate(BaseModel):
     name: str = Field(min_length=1)
-    target_value: float = Field(gt=0)
+    target_value: float = Field(gt=0, allow_inf_nan=False)
     unit: str = Field(min_length=1)
     owner_id: int
     period_start: date
@@ -37,7 +37,7 @@ class KpiCreate(BaseModel):
 
 class KpiUpdate(BaseModel):
     name: str | None = None
-    target_value: float | None = Field(default=None, gt=0)
+    target_value: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     unit: str | None = None
     period_start: date | None = None
     period_end: date | None = None
@@ -153,7 +153,7 @@ class SuggestionQueueOut(BaseModel):
 
 class KpiApproveIn(BaseModel):
     final_kpi_id: int
-    final_delta: float
+    final_delta: float = Field(allow_inf_nan=False)
     note: str | None = None
 
 

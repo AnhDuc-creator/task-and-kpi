@@ -2,11 +2,12 @@
 hoặc không gì được ghi. Không bao giờ có suggestion `approved` mà sổ cái thiếu dòng.
 """
 
+import math
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.errors import ConflictError, NotFoundError
+from app.errors import ConflictError, InvalidInputError, NotFoundError
 from app.models import (
     Kpi,
     KpiProgressEntry,
@@ -53,6 +54,10 @@ def approve_kpi_suggestion(
     suggestion = _load_pending_kpi_suggestion(db, suggestion_id)
     if db.get(Kpi, final_kpi_id) is None:
         raise NotFoundError(f"Không tìm thấy KPI {final_kpi_id}")
+    if not math.isfinite(final_delta):
+        raise InvalidInputError(
+            f"final_delta không phải số hữu hạn: {final_delta}"
+        )
 
     try:
         suggestion.final_kpi_id = final_kpi_id

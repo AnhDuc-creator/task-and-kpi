@@ -75,6 +75,42 @@ def test_non_positive_target_is_rejected(api_client):
     assert response.status_code == 422
 
 
+def _post_raw_json(api_client, url, raw_body):
+    """Gửi thân JSON thô: `1e400`/`NaN` là JSON hợp lệ về cú pháp nhưng `json=`
+    của client sẽ tự chặn trước khi gửi, nên phải tự dựng payload."""
+    return api_client.post(
+        url, content=raw_body.encode(), headers={"Content-Type": "application/json"}
+    )
+
+
+def test_infinite_target_value_is_rejected(api_client):
+    employee = create_employee(api_client)
+
+    response = _post_raw_json(
+        api_client,
+        "/api/kpis",
+        '{"name":"Sai","target_value":1e400,"unit":"cai","owner_id":%d,'
+        '"period_start":"2026-01-01","period_end":"2026-12-31"}' % employee["id"],
+    )
+
+    assert response.status_code == 422
+
+
+def test_nan_target_value_is_rejected_cleanly(api_client):
+    """NaN từng làm sập chính handler báo lỗi 422 (serialize `nan` thất bại).
+    Giờ phải trả về 422 sạch, không phải 500."""
+    employee = create_employee(api_client)
+
+    response = _post_raw_json(
+        api_client,
+        "/api/kpis",
+        '{"name":"Sai","target_value":NaN,"unit":"cai","owner_id":%d,'
+        '"period_start":"2026-01-01","period_end":"2026-12-31"}' % employee["id"],
+    )
+
+    assert response.status_code == 422
+
+
 def test_period_end_before_start_is_rejected(api_client):
     employee = create_employee(api_client)
     response = api_client.post(

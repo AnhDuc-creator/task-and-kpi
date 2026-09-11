@@ -1,6 +1,6 @@
 import pytest
 
-from app.models import KpiProgressEntry
+from app.models import KpiProgressEntry, KpiUpdateSuggestion, SuggestionStatus
 
 
 @pytest.fixture
@@ -167,3 +167,45 @@ def test_approving_can_reassign_to_a_different_kpi(api_client, db_session, submi
 
     entry = db_session.query(KpiProgressEntry).one()
     assert entry.kpi_id == other["id"]
+
+
+def _post_raw_json(api_client, url, raw_body):
+    """Gửi thân JSON thô: cần để đưa `1e400`/`NaN` qua HTTP, vì `json=` của
+    client sẽ tự chặn các giá trị không hữu hạn trước khi gửi đi."""
+    return api_client.post(
+        url, content=raw_body.encode(), headers={"Content-Type": "application/json"}
+    )
+
+
+def test_approving_with_infinite_delta_is_rejected(api_client, db_session, submitted):
+    """`1e400` là JSON hợp lệ nhưng Python parse ra `inf` — đây chính là repro
+    của lỗi nghiêm trọng: sổ cái phải còn trống và suggestion còn `pending`."""
+    suggestion = submitted["report"]["kpi_suggestions"][0]
+
+    response = _post_raw_json(
+        api_client,
+        f"/api/suggestions/kpi/{suggestion['id']}/approve",
+        '{"final_kpi_id": %d, "final_delta": 1e400}' % submitted["kpi"]["id"],
+    )
+
+    assert response.status_code == 422
+    assert db_session.query(KpiProgressEntry).count() == 0
+    db_session.expire_all()
+    stored = db_session.get(KpiUpdateSuggestion, suggestion["id"])
+    assert stored.status is SuggestionStatus.PENDING
+
+
+def test_approving_with_nan_delta_is_rejected(api_client, db_session, submitted):
+    suggestion = submitted["report"]["kpi_suggestions"][0]
+
+    response = _post_raw_json(
+        api_client,
+        f"/api/suggestions/kpi/{suggestion['id']}/approve",
+        '{"final_kpi_id": %d, "final_delta": NaN}' % submitted["kpi"]["id"],
+    )
+
+    assert response.status_code == 422
+    assert db_session.query(KpiProgressEntry).count() == 0
+    db_session.expire_all()
+    stored = db_session.get(KpiUpdateSuggestion, suggestion["id"])
+    assert stored.status is SuggestionStatus.PENDING

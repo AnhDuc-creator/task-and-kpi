@@ -2,7 +2,7 @@ from datetime import date, datetime
 
 import pytest
 
-from app.errors import ConflictError, NotFoundError
+from app.errors import ConflictError, InvalidInputError, NotFoundError
 from app.llm.mock import MockProvider
 from app.models import (
     Employee,
@@ -152,6 +152,24 @@ def test_approving_rejected_suggestion_raises_conflict(db_session, report):
 def test_unknown_suggestion_raises_not_found(db_session, report):
     with pytest.raises(NotFoundError):
         reject_kpi_suggestion(db_session, suggestion_id=999999)
+
+
+def test_infinite_final_delta_raises_invalid_input(db_session, report):
+    """Gương ràng buộc `allow_inf_nan=False` của LLM sang phía quản lý: một
+    `final_delta` vô cực làm hỏng sổ cái vĩnh viễn nếu lọt qua được."""
+    suggestion = report.kpi_suggestions[0]
+
+    with pytest.raises(InvalidInputError):
+        approve_kpi_suggestion(
+            db_session,
+            suggestion_id=suggestion.id,
+            final_kpi_id=suggestion.suggested_kpi_id,
+            final_delta=float("inf"),
+        )
+
+    assert db_session.query(KpiProgressEntry).count() == 0
+    db_session.expire_all()
+    assert suggestion.status is SuggestionStatus.PENDING
 
 
 def test_unknown_final_kpi_raises_not_found(db_session, report):
