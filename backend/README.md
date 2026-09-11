@@ -2,17 +2,20 @@
 
 ## Chạy lần đầu
 
+Virtualenv nằm ở **thư mục gốc của repo**, không nằm trong `backend/`:
+
 ```powershell
-cd backend
+# từ thư mục gốc D:\projects\task-and-kpi
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-Copy-Item .env.example .env
+pip install -e ".\backend[dev]"
+Copy-Item backend\.env.example backend\.env
 ```
 
 ## Chạy server
 
 ```powershell
+cd backend
 uvicorn app.main:app --reload
 ```
 
@@ -21,6 +24,7 @@ API docs: http://127.0.0.1:8000/docs
 ## Chạy test
 
 ```powershell
+cd backend
 pytest
 ```
 
