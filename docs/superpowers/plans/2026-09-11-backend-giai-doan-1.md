@@ -227,7 +227,7 @@ def health() -> dict[str, str]:
 - [ ] **Step 10: Chạy test để xác nhận nó pass**
 
 Run: `pytest tests/test_config.py tests/test_health.py -v`
-Expected: PASS (4 test)
+Expected: PASS (3 test)
 
 - [ ] **Step 11: Commit**
 
