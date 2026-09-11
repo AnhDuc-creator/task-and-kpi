@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.db import Base, engine
 from app.errors import ConflictError, InvalidInputError, NotFoundError
-from app.routers import employees, kpis, reports, tasks
+from app.routers import employees, kpis, reports, suggestions, tasks
 
 
 @asynccontextmanager
@@ -52,3 +52,4 @@ app.include_router(employees.router)
 app.include_router(kpis.router)
 app.include_router(tasks.router)
 app.include_router(reports.router)
+app.include_router(suggestions.router)

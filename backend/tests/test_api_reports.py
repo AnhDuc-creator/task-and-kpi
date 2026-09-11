@@ -103,3 +103,17 @@ def test_failed_extraction_is_reported(api_client, seeded):
     assert body["extraction_status"] == "extracted"
     assert body["kpi_suggestions"] == []
     assert body["blockers"] == []
+
+
+def test_reextract_blocked_after_approval_returns_409(api_client, seeded):
+    created = submit(api_client, seeded["employee"]["id"]).json()
+    suggestion = created["kpi_suggestions"][0]
+    approved = api_client.post(
+        f"/api/suggestions/kpi/{suggestion['id']}/approve",
+        json={"final_kpi_id": seeded["kpi"]["id"], "final_delta": 5.0},
+    )
+    assert approved.status_code == 200
+
+    response = api_client.post(f"/api/reports/{created['id']}/extract")
+
+    assert response.status_code == 409

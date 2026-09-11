@@ -130,3 +130,32 @@ class ReportOut(BaseModel):
     kpi_suggestions: list[KpiSuggestionOut]
     task_suggestions: list[TaskSuggestionOut]
     blockers: list[BlockerOut]
+
+
+class SuggestionContextOut(BaseModel):
+    """Suggestion kèm ngữ cảnh để trang duyệt không phải gọi thêm API."""
+
+    id: int
+    report_id: int
+    employee_name: str
+    week_start: date
+    suggested_kpi_id: int | None = None
+    suggested_delta: float | None = None
+    suggested_task_id: int | None = None
+    raw_text: str | None = None
+    evidence: str | None = None
+
+
+class SuggestionQueueOut(BaseModel):
+    kpi_updates: list[SuggestionContextOut]
+    task_completions: list[SuggestionContextOut]
+
+
+class KpiApproveIn(BaseModel):
+    final_kpi_id: int
+    final_delta: float
+    note: str | None = None
+
+
+class TaskApproveIn(BaseModel):
+    final_task_id: int
