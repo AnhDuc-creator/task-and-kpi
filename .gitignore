@@ -9,3 +9,4 @@ dist/
 .superpowers/
 .claude/worktrees/
 *.egg-info/
+tests/e2e/screenshots/
