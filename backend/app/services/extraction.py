@@ -18,6 +18,7 @@ from app.models import (
     ExtractionStatus,
     Kpi,
     KpiUpdateSuggestion,
+    SuggestionStatus,
     Task,
     TaskCompletionSuggestion,
     TaskStatus,
@@ -123,6 +124,59 @@ def submit_report(
         employee_id=employee_id, week_start=week_start, raw_text=raw_text
     )
     db.add(report)
+    db.commit()
+    db.refresh(report)
+
+    return run_extraction(db, report, provider)
+
+
+def _has_approved_suggestion(db: Session, report_id: int) -> bool:
+    """Quét CẢ HAI bảng suggestion — một dòng approved ở bất kỳ bảng nào cũng tính."""
+    approved_kpi = db.scalar(
+        select(KpiUpdateSuggestion.id).where(
+            KpiUpdateSuggestion.report_id == report_id,
+            KpiUpdateSuggestion.status == SuggestionStatus.APPROVED,
+        )
+    )
+    if approved_kpi is not None:
+        return True
+    approved_task = db.scalar(
+        select(TaskCompletionSuggestion.id).where(
+            TaskCompletionSuggestion.report_id == report_id,
+            TaskCompletionSuggestion.status == SuggestionStatus.APPROVED,
+        )
+    )
+    return approved_task is not None
+
+
+def reextract_report(
+    db: Session, report: WeeklyReport, provider: LlmProvider
+) -> WeeklyReport:
+    """Chạy lại trích xuất cho một báo cáo.
+
+    Cho phép khi báo cáo đang `failed`, HOẶC khi chưa có suggestion nào được
+    duyệt. Một dòng đã duyệt là khoá báo cáo lại, vì số liệu đã vào sổ cái.
+    """
+    if (
+        report.extraction_status is not ExtractionStatus.FAILED
+        and _has_approved_suggestion(db, report.id)
+    ):
+        raise ConflictError(
+            "Báo cáo đã có đề xuất được duyệt nên không thể trích xuất lại"
+        )
+
+    for suggestion in list(report.kpi_suggestions):
+        if suggestion.status is SuggestionStatus.PENDING:
+            db.delete(suggestion)
+    for suggestion in list(report.task_suggestions):
+        if suggestion.status is SuggestionStatus.PENDING:
+            db.delete(suggestion)
+    for blocker in list(report.blockers):
+        db.delete(blocker)
+
+    report.extraction_status = ExtractionStatus.PENDING
+    report.extraction_error = None
+    report.raw_llm_response = None
     db.commit()
     db.refresh(report)
 
