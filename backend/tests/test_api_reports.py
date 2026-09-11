@@ -1,5 +1,9 @@
 import pytest
 
+from app.dependencies import get_llm_provider
+from app.llm.base import ExtractionError
+from app.llm.mock import ScriptedProvider
+from app.main import app
 from app.models import KpiUpdateSuggestion
 
 
@@ -91,7 +95,7 @@ def test_reextract_replaces_pending_suggestions(api_client, db_session, seeded):
     assert suggestions[0]["evidence"] != "DAU VET CU"
 
 
-def test_failed_extraction_is_reported(api_client, seeded):
+def test_empty_extraction_is_still_a_success(api_client, seeded):
     """Nhân viên không có KPI/Task nào -> mock không trích được gì, nhưng vẫn
     là một lần trích xuất thành công với danh sách rỗng."""
     other = api_client.post(
@@ -103,6 +107,51 @@ def test_failed_extraction_is_reported(api_client, seeded):
     assert body["extraction_status"] == "extracted"
     assert body["kpi_suggestions"] == []
     assert body["blockers"] == []
+
+
+def test_provider_failure_is_reported_over_http(api_client, seeded):
+    """Ghi đè `get_llm_provider` bằng một provider luôn ném `ExtractionError`,
+    để chứng minh đường thất bại được trả đúng qua HTTP, chứ không chỉ ở tầng
+    service. Phải nhớ gỡ override sau khi xong, giống cách `api_client` làm."""
+
+    def override_provider():
+        return ScriptedProvider(error=ExtractionError("LLM hong"))
+
+    app.dependency_overrides[get_llm_provider] = override_provider
+    try:
+        response = submit(api_client, seeded["employee"]["id"])
+    finally:
+        del app.dependency_overrides[get_llm_provider]
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["extraction_status"] == "failed"
+    assert body["extraction_error"] is not None
+    assert body["kpi_suggestions"] == []
+    assert body["task_suggestions"] == []
+    assert body["blockers"] == []
+
+
+def test_failed_report_can_be_reextracted_over_http(api_client, seeded):
+    """Sau khi thất bại, gỡ override để provider mock (mặc định) chạy thật —
+    trích lại phải thành công và xoá sạch dấu vết lỗi cũ."""
+
+    def override_provider():
+        return ScriptedProvider(error=ExtractionError("LLM hong"))
+
+    app.dependency_overrides[get_llm_provider] = override_provider
+    try:
+        created = submit(api_client, seeded["employee"]["id"]).json()
+    finally:
+        del app.dependency_overrides[get_llm_provider]
+    assert created["extraction_status"] == "failed"
+
+    response = api_client.post(f"/api/reports/{created['id']}/extract")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["extraction_status"] == "extracted"
+    assert body["extraction_error"] is None
 
 
 def test_reextract_blocked_after_approval_returns_409(api_client, seeded):

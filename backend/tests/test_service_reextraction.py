@@ -67,10 +67,12 @@ def test_failed_report_can_be_reextracted(db_session, seeded):
         db_session, seeded, ScriptedProvider(error=ExtractionError("hong"))
     )
     assert report.extraction_status is ExtractionStatus.FAILED
+    assert report.extraction_error is not None
 
     report = reextract_report(db_session, report, MockProvider())
 
     assert report.extraction_status is ExtractionStatus.EXTRACTED
+    assert report.extraction_error is None
     assert len(report.kpi_suggestions) == 1
 
 
