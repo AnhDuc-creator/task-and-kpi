@@ -1,0 +1,194 @@
+def create_employee(client, email="a@example.com"):
+    response = client.post(
+        "/api/employees", json={"name": "Nguyen Van A", "email": email}
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+def create_kpi(client, owner_id):
+    response = client.post(
+        "/api/kpis",
+        json={
+            "name": "Hop dong ky moi",
+            "target_value": 100.0,
+            "unit": "hop dong",
+            "owner_id": owner_id,
+            "period_start": "2026-01-01",
+            "period_end": "2026-12-31",
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+def test_create_and_list_employees(api_client):
+    created = create_employee(api_client)
+    assert created["id"] > 0
+
+    listed = api_client.get("/api/employees").json()
+    assert [item["email"] for item in listed] == ["a@example.com"]
+
+
+def test_create_and_get_kpi(api_client):
+    employee = create_employee(api_client)
+    kpi = create_kpi(api_client, employee["id"])
+
+    fetched = api_client.get(f"/api/kpis/{kpi['id']}").json()
+    assert fetched["name"] == "Hop dong ky moi"
+    assert fetched["target_value"] == 100.0
+
+
+def test_kpi_response_has_no_current_value_field(api_client):
+    employee = create_employee(api_client)
+    kpi = create_kpi(api_client, employee["id"])
+    assert "current_value" not in kpi
+
+
+def test_get_unknown_kpi_returns_404(api_client):
+    assert api_client.get("/api/kpis/999999").status_code == 404
+
+
+def test_patch_kpi_target(api_client):
+    employee = create_employee(api_client)
+    kpi = create_kpi(api_client, employee["id"])
+
+    response = api_client.patch(f"/api/kpis/{kpi['id']}", json={"target_value": 150.0})
+
+    assert response.status_code == 200
+    assert response.json()["target_value"] == 150.0
+
+
+def test_non_positive_target_is_rejected(api_client):
+    employee = create_employee(api_client)
+    response = api_client.post(
+        "/api/kpis",
+        json={
+            "name": "Sai",
+            "target_value": 0,
+            "unit": "cai",
+            "owner_id": employee["id"],
+            "period_start": "2026-01-01",
+            "period_end": "2026-12-31",
+        },
+    )
+    assert response.status_code == 422
+
+
+def _post_raw_json(api_client, url, raw_body):
+    """Gửi thân JSON thô: `1e400`/`NaN` là JSON hợp lệ về cú pháp nhưng `json=`
+    của client sẽ tự chặn trước khi gửi, nên phải tự dựng payload."""
+    return api_client.post(
+        url, content=raw_body.encode(), headers={"Content-Type": "application/json"}
+    )
+
+
+def test_infinite_target_value_is_rejected(api_client):
+    employee = create_employee(api_client)
+
+    response = _post_raw_json(
+        api_client,
+        "/api/kpis",
+        '{"name":"Sai","target_value":1e400,"unit":"cai","owner_id":%d,'
+        '"period_start":"2026-01-01","period_end":"2026-12-31"}' % employee["id"],
+    )
+
+    assert response.status_code == 422
+
+
+def test_nan_target_value_is_rejected_cleanly(api_client):
+    """NaN từng làm sập chính handler báo lỗi 422 (serialize `nan` thất bại).
+    Giờ phải trả về 422 sạch, không phải 500."""
+    employee = create_employee(api_client)
+
+    response = _post_raw_json(
+        api_client,
+        "/api/kpis",
+        '{"name":"Sai","target_value":NaN,"unit":"cai","owner_id":%d,'
+        '"period_start":"2026-01-01","period_end":"2026-12-31"}' % employee["id"],
+    )
+
+    assert response.status_code == 422
+
+
+def test_period_end_before_start_is_rejected(api_client):
+    employee = create_employee(api_client)
+    response = api_client.post(
+        "/api/kpis",
+        json={
+            "name": "Sai",
+            "target_value": 10,
+            "unit": "cai",
+            "owner_id": employee["id"],
+            "period_start": "2026-12-31",
+            "period_end": "2026-01-01",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_create_and_patch_task(api_client):
+    employee = create_employee(api_client)
+    kpi = create_kpi(api_client, employee["id"])
+
+    created = api_client.post(
+        "/api/tasks",
+        json={
+            "title": "Chot hop dong khach X",
+            "kpi_id": kpi["id"],
+            "assignee_id": employee["id"],
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["status"] == "todo"
+
+    patched = api_client.patch(
+        f"/api/tasks/{created.json()['id']}", json={"status": "doing"}
+    )
+    assert patched.json()["status"] == "doing"
+
+
+def test_task_with_unknown_kpi_returns_404(api_client):
+    employee = create_employee(api_client)
+    response = api_client.post(
+        "/api/tasks",
+        json={"title": "x", "kpi_id": 999999, "assignee_id": employee["id"]},
+    )
+    assert response.status_code == 404
+
+
+def test_duplicate_email_returns_409(api_client):
+    """Email trùng là xung đột trạng thái, không phải lỗi máy chủ."""
+    create_employee(api_client)
+
+    response = api_client.post(
+        "/api/employees", json={"name": "Nguoi khac", "email": "a@example.com"}
+    )
+
+    assert response.status_code == 409
+    assert len(api_client.get("/api/employees").json()) == 1
+
+
+def test_patch_cannot_create_inverted_period(api_client):
+    """PATCH chỉ đổi một mốc vẫn phải bị chặn nếu tạo ra kỳ ngược."""
+    employee = create_employee(api_client)
+    kpi = create_kpi(api_client, employee["id"])  # 2026-01-01 .. 2026-12-31
+
+    response = api_client.patch(
+        f"/api/kpis/{kpi['id']}", json={"period_end": "2025-01-01"}
+    )
+
+    assert response.status_code == 422
+    unchanged = api_client.get(f"/api/kpis/{kpi['id']}").json()
+    assert unchanged["period_end"] == "2026-12-31"
+
+
+def test_patch_with_explicit_null_is_ignored(api_client):
+    """Gửi null tường minh cho một trường không nullable thì bỏ qua, không 500."""
+    employee = create_employee(api_client)
+    kpi = create_kpi(api_client, employee["id"])
+
+    response = api_client.patch(f"/api/kpis/{kpi['id']}", json={"target_value": None})
+
+    assert response.status_code == 200
+    assert response.json()["target_value"] == 100.0

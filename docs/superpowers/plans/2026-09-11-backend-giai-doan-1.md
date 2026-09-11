@@ -14,7 +14,7 @@
 
 - Tên biến, hàm, class, bảng, trường: **tiếng Anh**. Tài liệu, comment giải thích nghiệp vụ, thông điệp lỗi hướng người dùng: **tiếng Việt**.
 - `LLM_PROVIDER` mặc định là `mock`. **Không test nào được gọi mạng.**
-- Model Anthropic: đọc từ biến môi trường `ANTHROPIC_MODEL`, mặc định `claude-sonnet-5`. Không hardcode tên model ở bất kỳ đâu ngoài giá trị mặc định trong `config.py`.
+- Model Anthropic: đọc từ biến môi trường `ANTHROPIC_MODEL`, mặc định `claude-sonnet-5`. Code ứng dụng (provider, factory, router) **không** được hardcode tên model — nó chỉ xuất hiện ở giá trị mặc định trong `config.py`, trong `.env.example`, và trong test khẳng định chính giá trị mặc định đó.
 - Ngưỡng cảnh báo rủi ro là hằng số có tên `RISK_THRESHOLD = 0.8`, không viết số `0.8` rải rác.
 - "Hôm nay" luôn được tiêm vào hàm qua tham số `today: date`; **không** gọi `date.today()` trong `rules.py` hay trong service.
 - `current_value` **không** được lưu thành cột trên bảng `kpis`.
@@ -227,7 +227,7 @@ def health() -> dict[str, str]:
 - [ ] **Step 10: Chạy test để xác nhận nó pass**
 
 Run: `pytest tests/test_config.py tests/test_health.py -v`
-Expected: PASS (4 test)
+Expected: PASS (3 test)
 
 - [ ] **Step 11: Commit**
 
@@ -597,6 +597,49 @@ def test_same_week_different_employee_is_allowed(db_session):
     assert db_session.query(WeeklyReport).count() == 2
 
 
+def test_enum_columns_store_lowercase_values(db_session):
+    """DB phải chứa `todo`/`pending`, không phải tên hằng `TODO`/`PENDING`.
+
+    Mặc định SQLAlchemy lưu tên hằng; spec quy định từ vựng chữ thường. Test
+    đọc thẳng bằng SQL thô để không bị ORM dịch ngược che mất.
+    """
+    from sqlalchemy import text
+
+    employee = Employee(name="G", email="g@example.com")
+    db_session.add(employee)
+    db_session.flush()
+    kpi = Kpi(
+        name="Doanh thu",
+        target_value=10.0,
+        unit="trieu",
+        owner_id=employee.id,
+        period_start=date(2026, 1, 1),
+        period_end=date(2026, 12, 31),
+    )
+    db_session.add(kpi)
+    db_session.flush()
+    db_session.add(
+        Task(
+            title="Viec A",
+            kpi_id=kpi.id,
+            assignee_id=employee.id,
+            status=TaskStatus.TODO,
+        )
+    )
+    db_session.add(
+        WeeklyReport(
+            employee_id=employee.id, week_start=date(2026, 3, 2), raw_text="x"
+        )
+    )
+    db_session.commit()
+
+    assert db_session.execute(text("SELECT status FROM tasks")).scalar() == "todo"
+    assert (
+        db_session.execute(text("SELECT extraction_status FROM weekly_reports")).scalar()
+        == "pending"
+    )
+
+
 def test_progress_entries_accumulate(db_session):
     employee = Employee(name="F", email="f@example.com")
     db_session.add(employee)
@@ -699,6 +742,19 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _enum_column(enum_cls: type[enum.Enum]) -> Enum:
+    """Cột enum lưu GIÁ TRỊ chữ thường (`todo`), không lưu tên hằng (`TODO`).
+
+    Mặc định SQLAlchemy lưu tên hằng, khiến dữ liệu trong DB lệch với từ vựng
+    mà spec quy định và làm SQL thô / seed data không đọc lại được qua ORM.
+    """
+    return Enum(
+        enum_cls,
+        native_enum=False,
+        values_callable=lambda cls: [member.value for member in cls],
+    )
+
+
 class TaskStatus(str, enum.Enum):
     TODO = "todo"
     DOING = "doing"
@@ -752,7 +808,7 @@ class Task(Base):
     kpi_id: Mapped[int] = mapped_column(ForeignKey("kpis.id"))
     assignee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
     status: Mapped[TaskStatus] = mapped_column(
-        Enum(TaskStatus, native_enum=False), default=TaskStatus.TODO
+        _enum_column(TaskStatus), default=TaskStatus.TODO
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
@@ -773,7 +829,7 @@ class WeeklyReport(Base):
     raw_text: Mapped[str] = mapped_column(Text)
     submitted_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     extraction_status: Mapped[ExtractionStatus] = mapped_column(
-        Enum(ExtractionStatus, native_enum=False), default=ExtractionStatus.PENDING
+        _enum_column(ExtractionStatus), default=ExtractionStatus.PENDING
     )
     extraction_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_name: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -802,7 +858,7 @@ class KpiUpdateSuggestion(Base):
     suggested_delta: Mapped[float] = mapped_column(Float)
     evidence: Mapped[str] = mapped_column(Text)
     status: Mapped[SuggestionStatus] = mapped_column(
-        Enum(SuggestionStatus, native_enum=False), default=SuggestionStatus.PENDING
+        _enum_column(SuggestionStatus), default=SuggestionStatus.PENDING
     )
     final_kpi_id: Mapped[int | None] = mapped_column(
         ForeignKey("kpis.id"), nullable=True
@@ -825,7 +881,7 @@ class TaskCompletionSuggestion(Base):
     )
     raw_text: Mapped[str] = mapped_column(Text)
     status: Mapped[SuggestionStatus] = mapped_column(
-        Enum(SuggestionStatus, native_enum=False), default=SuggestionStatus.PENDING
+        _enum_column(SuggestionStatus), default=SuggestionStatus.PENDING
     )
     final_task_id: Mapped[int | None] = mapped_column(
         ForeignKey("tasks.id"), nullable=True
@@ -2185,14 +2241,19 @@ def test_failed_report_can_be_reextracted(db_session, seeded):
 
 
 def test_extracted_report_without_approvals_can_be_reextracted(db_session, seeded):
+    """Đánh dấu dòng cũ rồi kiểm dòng còn lại không mang dấu đó.
+
+    Không so sánh id: SQLite cấp lại khoá chính khi bảng bị xoá sạch, nên
+    id trùng nhau là chuyện bình thường và không nói lên điều gì.
+    """
     report = make_report(db_session, seeded, MockProvider())
-    old_ids = {s.id for s in report.kpi_suggestions}
+    report.kpi_suggestions[0].evidence = "DAU VET CU"
+    db_session.commit()
 
     report = reextract_report(db_session, report, MockProvider())
 
-    new_ids = {s.id for s in report.kpi_suggestions}
-    assert new_ids.isdisjoint(old_ids)
     assert len(report.kpi_suggestions) == 1
+    assert report.kpi_suggestions[0].evidence != "DAU VET CU"
 
 
 def test_reextraction_deletes_pending_suggestions(db_session, seeded):
@@ -2225,13 +2286,15 @@ def test_reextraction_keeps_rejected_suggestions(db_session, seeded):
 
 
 def test_reextraction_recreates_blockers(db_session, seeded):
+    """Blocker cũ bị xoá và tạo lại — kiểm bằng nội dung, không bằng id."""
     report = make_report(db_session, seeded, MockProvider())
-    old_ids = {b.id for b in report.blockers}
+    report.blockers[0].description = "DAU VET CU"
+    db_session.commit()
 
     report = reextract_report(db_session, report, MockProvider())
 
     assert len(report.blockers) == 1
-    assert {b.id for b in report.blockers}.isdisjoint(old_ids)
+    assert report.blockers[0].description != "DAU VET CU"
     assert db_session.query(Blocker).count() == 1
 
 
@@ -2379,6 +2442,7 @@ from app.models import (
     Task,
     TaskStatus,
 )
+from app.services import approval
 from app.services.approval import (
     approve_kpi_suggestion,
     approve_task_suggestion,
@@ -2611,6 +2675,41 @@ def test_double_task_approval_raises_conflict(db_session, report):
             suggestion_id=suggestion.id,
             final_task_id=suggestion.suggested_task_id,
         )
+
+
+def test_failure_mid_task_approval_rolls_back_everything(
+    db_session, report, monkeypatch
+):
+    """Duyệt task cũng phải nguyên tử, đúng như duyệt KPI.
+
+    Cho hỏng ở lần gọi `_utcnow()` THỨ HAI: lúc đó suggestion đã được đánh
+    `approved` và task đã bị đặt `done` trong session. Nếu hai thay đổi này
+    không nằm chung một giao dịch, một trong hai sẽ sống sót sau rollback.
+    """
+    suggestion = report.task_suggestions[0]
+    task_id = suggestion.suggested_task_id
+    real_utcnow = approval._utcnow
+    calls = {"count": 0}
+
+    def explode_on_second_call():
+        calls["count"] += 1
+        if calls["count"] >= 2:
+            raise RuntimeError("o dia loi")
+        return real_utcnow()
+
+    monkeypatch.setattr("app.services.approval._utcnow", explode_on_second_call)
+
+    with pytest.raises(RuntimeError):
+        approve_task_suggestion(
+            db_session, suggestion_id=suggestion.id, final_task_id=task_id
+        )
+
+    db_session.expire_all()
+    assert suggestion.status is SuggestionStatus.PENDING
+    assert suggestion.final_task_id is None
+    task = db_session.get(Task, task_id)
+    assert task.status is TaskStatus.TODO
+    assert task.completed_at is None
 ```
 
 - [ ] **Step 2: Chạy test để xác nhận nó thất bại**
@@ -2760,7 +2859,7 @@ def reject_task_suggestion(
 - [ ] **Step 4: Chạy test để xác nhận nó pass**
 
 Run: `pytest tests/test_service_approval.py -v`
-Expected: PASS (13 test)
+Expected: PASS (14 test)
 
 - [ ] **Step 5: Commit**
 
@@ -2976,15 +3075,27 @@ git commit -m "feat(backend): service dashboard tinh current_value tu so cai"
 ### Task 11: HTTP schemas và router CRUD (employees, kpis, tasks)
 
 **Files:**
+- Modify: `backend/app/errors.py` (thêm `InvalidInputError`)
 - Create: `backend/app/schemas.py`, `backend/app/routers/__init__.py`, `backend/app/routers/employees.py`, `backend/app/routers/kpis.py`, `backend/app/routers/tasks.py`
-- Modify: `backend/app/main.py` (gắn router và exception handler)
+- Modify: `backend/app/main.py` (gắn router và exception handler), `backend/tests/conftest.py` (thêm fixture `api_client`)
 - Test: `backend/tests/test_api_crud.py`
 
 **Interfaces:**
 - Consumes: `app.models.*`, `app.errors.*`, `app.db.get_db`
 - Produces: `app.schemas.EmployeeCreate` / `EmployeeOut`, `KpiCreate` / `KpiUpdate` / `KpiOut`, `TaskCreate` / `TaskUpdate` / `TaskOut`; router object `router` trong mỗi file `app/routers/*.py`; fixture pytest `api_client` (một `TestClient` đã ghi đè `get_db` sang SQLite in-memory)
 
-- [ ] **Step 1: Thêm fixture `api_client` vào `backend/tests/conftest.py`**
+- [ ] **Step 1: Thêm `InvalidInputError` vào cuối `backend/app/errors.py`**
+
+```python
+class InvalidInputError(Exception):
+    """Dữ liệu vào không hợp lệ mà Pydantic không tự bắt được (→ HTTP 422).
+
+    Dùng cho ràng buộc chỉ kiểm được sau khi trộn dữ liệu gửi lên với dữ liệu
+    đang lưu — ví dụ PATCH chỉ đổi `period_end` nhưng lại tạo ra kỳ ngược.
+    """
+```
+
+- [ ] **Step 2: Thêm fixture `api_client` vào `backend/tests/conftest.py`**
 
 ```python
 from fastapi.testclient import TestClient
@@ -3005,7 +3116,7 @@ def api_client(db_session):
         app.dependency_overrides.clear()
 ```
 
-- [ ] **Step 2: Viết test thất bại**
+- [ ] **Step 3: Viết test thất bại**
 
 `backend/tests/test_api_crud.py`:
 
@@ -3131,14 +3242,51 @@ def test_task_with_unknown_kpi_returns_404(api_client):
         json={"title": "x", "kpi_id": 999999, "assignee_id": employee["id"]},
     )
     assert response.status_code == 404
+
+
+def test_duplicate_email_returns_409(api_client):
+    """Email trùng là xung đột trạng thái, không phải lỗi máy chủ."""
+    create_employee(api_client)
+
+    response = api_client.post(
+        "/api/employees", json={"name": "Nguoi khac", "email": "a@example.com"}
+    )
+
+    assert response.status_code == 409
+    assert len(api_client.get("/api/employees").json()) == 1
+
+
+def test_patch_cannot_create_inverted_period(api_client):
+    """PATCH chỉ đổi một mốc vẫn phải bị chặn nếu tạo ra kỳ ngược."""
+    employee = create_employee(api_client)
+    kpi = create_kpi(api_client, employee["id"])  # 2026-01-01 .. 2026-12-31
+
+    response = api_client.patch(
+        f"/api/kpis/{kpi['id']}", json={"period_end": "2025-01-01"}
+    )
+
+    assert response.status_code == 422
+    unchanged = api_client.get(f"/api/kpis/{kpi['id']}").json()
+    assert unchanged["period_end"] == "2026-12-31"
+
+
+def test_patch_with_explicit_null_is_ignored(api_client):
+    """Gửi null tường minh cho một trường không nullable thì bỏ qua, không 500."""
+    employee = create_employee(api_client)
+    kpi = create_kpi(api_client, employee["id"])
+
+    response = api_client.patch(f"/api/kpis/{kpi['id']}", json={"target_value": None})
+
+    assert response.status_code == 200
+    assert response.json()["target_value"] == 100.0
 ```
 
-- [ ] **Step 3: Chạy test để xác nhận nó thất bại**
+- [ ] **Step 4: Chạy test để xác nhận nó thất bại**
 
 Run: `pytest tests/test_api_crud.py -v`
 Expected: FAIL — mọi request trả 404 vì router chưa được gắn
 
-- [ ] **Step 4: Viết `backend/app/schemas.py`**
+- [ ] **Step 5: Viết `backend/app/schemas.py`**
 
 ```python
 """Pydantic model cho HTTP API. Tách khỏi schema của tầng LLM."""
@@ -3147,7 +3295,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.models import SuggestionStatus, TaskStatus
+from app.models import TaskStatus
 
 
 class EmployeeCreate(BaseModel):
@@ -3220,106 +3368,14 @@ class TaskOut(BaseModel):
     completed_at: datetime | None
 
 
-class ReportCreate(BaseModel):
-    employee_id: int
-    week_start: date
-    raw_text: str = Field(min_length=1)
-
-
-class KpiSuggestionOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    report_id: int
-    suggested_kpi_id: int | None
-    suggested_delta: float
-    evidence: str
-    status: SuggestionStatus
-    final_kpi_id: int | None
-    final_delta: float | None
-    review_note: str | None
-
-
-class TaskSuggestionOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    report_id: int
-    suggested_task_id: int | None
-    raw_text: str
-    status: SuggestionStatus
-    final_task_id: int | None
-
-
-class BlockerOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    report_id: int
-    description: str
-    related_kpi_id: int | None
-
-
-class ReportOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    employee_id: int
-    week_start: date
-    raw_text: str
-    extraction_status: str
-    extraction_error: str | None
-    provider_name: str | None
-    kpi_suggestions: list[KpiSuggestionOut]
-    task_suggestions: list[TaskSuggestionOut]
-    blockers: list[BlockerOut]
-
-
-class SuggestionContextOut(BaseModel):
-    """Suggestion kèm ngữ cảnh để trang duyệt không phải gọi thêm API."""
-
-    id: int
-    report_id: int
-    employee_name: str
-    week_start: date
-    suggested_kpi_id: int | None = None
-    suggested_delta: float | None = None
-    suggested_task_id: int | None = None
-    raw_text: str | None = None
-    evidence: str | None = None
-
-
-class SuggestionQueueOut(BaseModel):
-    kpi_updates: list[SuggestionContextOut]
-    task_completions: list[SuggestionContextOut]
-
-
-class KpiApproveIn(BaseModel):
-    final_kpi_id: int
-    final_delta: float
-    note: str | None = None
-
-
-class TaskApproveIn(BaseModel):
-    final_task_id: int
-
-
-class DashboardItemOut(BaseModel):
-    kpi_id: int
-    kpi_name: str
-    unit: str
-    owner_name: str
-    period_start: date
-    period_end: date
-    actual_value: float
-    target_value: float
-    expected_value: float
-    percent_complete: float
-    status: str
-    at_risk: bool
 ```
 
-- [ ] **Step 5: Tạo `backend/app/routers/__init__.py` rỗng, rồi viết ba router**
+> Chỉ viết đúng các schema mà Task 11 dùng. Schema cho báo cáo, hàng đợi duyệt
+> và dashboard được thêm vào chính file này ở Task 12, 13, 14 — mỗi task chỉ
+> thêm phần nó thực sự dùng, để không có model nào nằm trong repo mà chưa có
+> endpoint nào gọi tới.
+
+- [ ] **Step 6: Tạo `backend/app/routers/__init__.py` rỗng, rồi viết ba router**
 
 `backend/app/routers/employees.py`:
 
@@ -3329,6 +3385,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.errors import ConflictError
 from app.models import Employee
 from app.schemas import EmployeeCreate, EmployeeOut
 
@@ -3342,6 +3399,11 @@ def list_employees(db: Session = Depends(get_db)) -> list[Employee]:
 
 @router.post("", response_model=EmployeeOut, status_code=status.HTTP_201_CREATED)
 def create_employee(payload: EmployeeCreate, db: Session = Depends(get_db)) -> Employee:
+    # Email là UNIQUE ở tầng DB. Kiểm trước để trả 409 thay vì để IntegrityError
+    # thoát ra thành 500.
+    existing = db.scalar(select(Employee).where(Employee.email == payload.email))
+    if existing is not None:
+        raise ConflictError(f"Email {payload.email} đã được dùng")
     employee = Employee(name=payload.name, email=payload.email)
     db.add(employee)
     db.commit()
@@ -3357,7 +3419,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.errors import NotFoundError
+from app.errors import InvalidInputError, NotFoundError
 from app.models import Employee, Kpi
 from app.schemas import KpiCreate, KpiOut, KpiUpdate
 
@@ -3395,8 +3457,22 @@ def update_kpi(
     kpi = db.get(Kpi, kpi_id)
     if kpi is None:
         raise NotFoundError(f"Không tìm thấy KPI {kpi_id}")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+
+    # exclude_none: PATCH là cập nhật một phần, không trường nào ở đây được
+    # phép thành null. Gửi null tường minh coi như không gửi.
+    for field, value in payload.model_dump(
+        exclude_unset=True, exclude_none=True
+    ).items():
         setattr(kpi, field, value)
+
+    # Kiểm sau khi đã trộn với giá trị đang lưu: PATCH chỉ đổi một trong hai
+    # mốc thời gian vẫn có thể tạo ra kỳ ngược. Kỳ ngược khiến
+    # compute_elapsed_ratio coi như kỳ dài 0 ngày và trả 1.0, làm KPI bị
+    # cảnh báo "có nguy cơ" oan.
+    if kpi.period_end < kpi.period_start:
+        db.rollback()
+        raise InvalidInputError("period_end phải không nhỏ hơn period_start")
+
     db.commit()
     db.refresh(kpi)
     return kpi
@@ -3442,14 +3518,16 @@ def update_task(
     task = db.get(Task, task_id)
     if task is None:
         raise NotFoundError(f"Không tìm thấy task {task_id}")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    for field, value in payload.model_dump(
+        exclude_unset=True, exclude_none=True
+    ).items():
         setattr(task, field, value)
     db.commit()
     db.refresh(task)
     return task
 ```
 
-- [ ] **Step 6: Cập nhật `backend/app/main.py`**
+- [ ] **Step 7: Cập nhật `backend/app/main.py`**
 
 ```python
 from collections.abc import AsyncIterator
@@ -3460,7 +3538,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.db import Base, engine
-from app.errors import ConflictError, NotFoundError
+from app.errors import ConflictError, InvalidInputError, NotFoundError
 from app.routers import employees, kpis, tasks
 
 
@@ -3492,6 +3570,11 @@ def handle_conflict(request: Request, exc: ConflictError) -> JSONResponse:
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
+@app.exception_handler(InvalidInputError)
+def handle_invalid_input(request: Request, exc: InvalidInputError) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -3502,15 +3585,15 @@ app.include_router(kpis.router)
 app.include_router(tasks.router)
 ```
 
-- [ ] **Step 7: Chạy test để xác nhận nó pass**
+- [ ] **Step 8: Chạy test để xác nhận nó pass**
 
 Run: `pytest tests/test_api_crud.py tests/test_health.py -v`
-Expected: PASS (10 test)
+Expected: PASS (13 test — 12 trong test_api_crud.py + 1 health)
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add backend/app/schemas.py backend/app/routers backend/app/main.py backend/tests/conftest.py backend/tests/test_api_crud.py
+git add backend/app/errors.py backend/app/schemas.py backend/app/routers backend/app/main.py backend/tests/conftest.py backend/tests/test_api_crud.py
 git commit -m "feat(backend): router CRUD employee, KPI, task va exception handler"
 ```
 
@@ -3520,6 +3603,7 @@ git commit -m "feat(backend): router CRUD employee, KPI, task va exception handl
 
 **Files:**
 - Create: `backend/app/routers/reports.py`, `backend/app/dependencies.py`
+- Modify: `backend/app/schemas.py` (thêm schema báo cáo ở cuối file)
 - Modify: `backend/app/main.py` (gắn thêm router `reports`)
 - Test: `backend/tests/test_api_reports.py`
 
@@ -3533,6 +3617,8 @@ git commit -m "feat(backend): router CRUD employee, KPI, task va exception handl
 
 ```python
 import pytest
+
+from app.models import KpiUpdateSuggestion
 
 
 @pytest.fixture
@@ -3603,39 +3689,110 @@ def test_get_unknown_report_returns_404(api_client):
     assert api_client.get("/api/reports/999999").status_code == 404
 
 
-def test_reextract_replaces_pending_suggestions(api_client, seeded):
+def test_reextract_replaces_pending_suggestions(api_client, db_session, seeded):
+    """Đánh dấu dòng cũ rồi kiểm dòng còn lại không mang dấu đó.
+
+    Không so sánh id: SQLite cấp lại khoá chính khi bảng bị xoá sạch, nên id
+    trùng nhau là bình thường và không chứng minh điều gì. `api_client` dùng
+    chung session với `db_session` nên đánh dấu được trực tiếp.
+    """
     created = submit(api_client, seeded["employee"]["id"]).json()
-    old_id = created["kpi_suggestions"][0]["id"]
+    old = db_session.get(KpiUpdateSuggestion, created["kpi_suggestions"][0]["id"])
+    old.evidence = "DAU VET CU"
+    db_session.commit()
 
     response = api_client.post(f"/api/reports/{created['id']}/extract")
 
     assert response.status_code == 200
-    new_id = response.json()["kpi_suggestions"][0]["id"]
-    assert new_id != old_id
+    suggestions = response.json()["kpi_suggestions"]
+    assert len(suggestions) == 1
+    assert suggestions[0]["evidence"] != "DAU VET CU"
 
 
-def test_reextract_blocked_after_approval_returns_409(api_client, seeded):
-    created = submit(api_client, seeded["employee"]["id"]).json()
-    suggestion = created["kpi_suggestions"][0]
-    approved = api_client.post(
-        f"/api/suggestions/kpi/{suggestion['id']}/approve",
-        json={"final_kpi_id": seeded["kpi"]["id"], "final_delta": 5.0},
-    )
-    assert approved.status_code == 200
+def test_failed_extraction_is_reported(api_client, seeded):
+    """Nhân viên không có KPI/Task nào -> mock không trích được gì, nhưng vẫn
+    là một lần trích xuất thành công với danh sách rỗng."""
+    other = api_client.post(
+        "/api/employees", json={"name": "Tran Thi B", "email": "b@example.com"}
+    ).json()
 
-    response = api_client.post(f"/api/reports/{created['id']}/extract")
+    body = submit(api_client, other["id"], text="Tuan nay hop giao ban.").json()
 
-    assert response.status_code == 409
+    assert body["extraction_status"] == "extracted"
+    assert body["kpi_suggestions"] == []
+    assert body["blockers"] == []
 ```
-
-> Ghi chú: hai test cuối cần endpoint duyệt của Task 13. Chạy chúng sau khi Task 13 xong; ở Task 12 chỉ cần bốn test đầu pass.
 
 - [ ] **Step 2: Chạy test để xác nhận nó thất bại**
 
-Run: `pytest tests/test_api_reports.py -v -k "not approval"`
+Run: `pytest tests/test_api_reports.py -v`
 Expected: FAIL — `POST /api/reports` trả 404 vì router chưa tồn tại
 
-- [ ] **Step 3: Viết `backend/app/dependencies.py`**
+- [ ] **Step 3: Thêm schema báo cáo vào cuối `backend/app/schemas.py`**
+
+Bổ sung `SuggestionStatus` vào dòng `from app.models import ...`, rồi thêm:
+
+```python
+class ReportCreate(BaseModel):
+    employee_id: int
+    week_start: date
+    raw_text: str = Field(min_length=1)
+
+
+class KpiSuggestionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    report_id: int
+    suggested_kpi_id: int | None
+    suggested_delta: float
+    evidence: str
+    status: SuggestionStatus
+    final_kpi_id: int | None
+    final_delta: float | None
+    review_note: str | None
+
+
+class TaskSuggestionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    report_id: int
+    suggested_task_id: int | None
+    raw_text: str
+    status: SuggestionStatus
+    final_task_id: int | None
+
+
+class BlockerOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    report_id: int
+    description: str
+    related_kpi_id: int | None
+
+
+class ReportOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    employee_id: int
+    week_start: date
+    raw_text: str
+    extraction_status: ExtractionStatus
+    extraction_error: str | None
+    provider_name: str | None
+    kpi_suggestions: list[KpiSuggestionOut]
+    task_suggestions: list[TaskSuggestionOut]
+    blockers: list[BlockerOut]
+```
+
+`extraction_status` và `status` khai báo bằng kiểu enum chứ không phải `str`, để
+Pydantic luôn serialize ra giá trị (`"extracted"`, `"pending"`) một cách xác định.
+Nhớ thêm cả `ExtractionStatus` vào dòng import từ `app.models`.
+
+- [ ] **Step 4: Viết `backend/app/dependencies.py`**
 
 ```python
 """Dependency dùng chung. Tách riêng để test ghi đè được provider."""
@@ -3649,7 +3806,7 @@ def get_llm_provider() -> LlmProvider:
     return get_provider(get_settings())
 ```
 
-- [ ] **Step 4: Viết `backend/app/routers/reports.py`**
+- [ ] **Step 5: Viết `backend/app/routers/reports.py`**
 
 ```python
 from fastapi import APIRouter, Depends, status
@@ -3711,7 +3868,7 @@ def reextract(
     return reextract_report(db, report, provider)
 ```
 
-- [ ] **Step 5: Gắn router vào `backend/app/main.py`**
+- [ ] **Step 6: Gắn router vào `backend/app/main.py`**
 
 Thêm `reports` vào dòng import và thêm `app.include_router(reports.router)` ở cuối file:
 
@@ -3721,12 +3878,12 @@ from app.routers import employees, kpis, reports, tasks
 app.include_router(reports.router)
 ```
 
-- [ ] **Step 6: Chạy test để xác nhận bốn test đầu pass**
+- [ ] **Step 7: Chạy test để xác nhận nó pass**
 
-Run: `pytest tests/test_api_reports.py -v -k "not approval"`
-Expected: PASS (5 test: 4 test đầu + `test_reextract_replaces_pending_suggestions`)
+Run: `pytest tests/test_api_reports.py -v`
+Expected: PASS (6 test)
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add backend/app/dependencies.py backend/app/routers/reports.py backend/app/main.py backend/tests/test_api_reports.py
@@ -3739,8 +3896,9 @@ git commit -m "feat(backend): router nop bao cao, xem va trich lai"
 
 **Files:**
 - Create: `backend/app/routers/suggestions.py`
+- Modify: `backend/app/schemas.py` (thêm schema hàng đợi duyệt ở cuối file)
 - Modify: `backend/app/main.py` (gắn router `suggestions`)
-- Test: `backend/tests/test_api_suggestions.py`
+- Test: `backend/tests/test_api_suggestions.py`, `backend/tests/test_api_reports.py` (thêm một test ở cuối)
 
 **Interfaces:**
 - Consumes: `app.services.approval.*`, `app.schemas.SuggestionQueueOut`, `SuggestionContextOut`, `KpiApproveIn`, `TaskApproveIn`
@@ -3752,6 +3910,8 @@ git commit -m "feat(backend): router nop bao cao, xem va trich lai"
 
 ```python
 import pytest
+
+from app.models import KpiProgressEntry
 
 
 @pytest.fixture
@@ -3886,6 +4046,56 @@ def test_rejecting_task_suggestion_leaves_task_todo(api_client, submitted):
 
 def test_unknown_suggestion_returns_404(api_client, submitted):
     assert api_client.post("/api/suggestions/kpi/999999/reject").status_code == 404
+
+
+def test_approving_can_reassign_to_a_different_kpi(api_client, db_session, submitted):
+    """`final_kpi_id` là nguồn sự thật, không phải KPI mà LLM đoán.
+
+    Đây cũng chính là cơ chế quản lý dùng để gán KPI cho một đề xuất mà LLM
+    trả về `kpi_id = null`: sổ cái phải ghi vào KPI quản lý chọn.
+    """
+    other = api_client.post(
+        "/api/kpis",
+        json={
+            "name": "Doanh thu",
+            "target_value": 1000.0,
+            "unit": "trieu",
+            "owner_id": submitted["employee"]["id"],
+            "period_start": "2026-01-01",
+            "period_end": "2026-12-31",
+        },
+    ).json()
+    suggestion = submitted["report"]["kpi_suggestions"][0]
+    assert suggestion["suggested_kpi_id"] == submitted["kpi"]["id"]
+
+    body = api_client.post(
+        f"/api/suggestions/kpi/{suggestion['id']}/approve",
+        json={"final_kpi_id": other["id"], "final_delta": 5.0},
+    ).json()
+
+    assert body["suggested_kpi_id"] == submitted["kpi"]["id"]  # bản gốc còn nguyên
+    assert body["final_kpi_id"] == other["id"]
+
+    entry = db_session.query(KpiProgressEntry).one()
+    assert entry.kpi_id == other["id"]
+```
+
+Và thêm vào **cuối** `backend/tests/test_api_reports.py` (file của Task 12) test
+khoá trích lại — nó cần endpoint duyệt nên chỉ chạy được từ task này:
+
+```python
+def test_reextract_blocked_after_approval_returns_409(api_client, seeded):
+    created = submit(api_client, seeded["employee"]["id"]).json()
+    suggestion = created["kpi_suggestions"][0]
+    approved = api_client.post(
+        f"/api/suggestions/kpi/{suggestion['id']}/approve",
+        json={"final_kpi_id": seeded["kpi"]["id"], "final_delta": 5.0},
+    )
+    assert approved.status_code == 200
+
+    response = api_client.post(f"/api/reports/{created['id']}/extract")
+
+    assert response.status_code == 409
 ```
 
 - [ ] **Step 2: Chạy test để xác nhận nó thất bại**
@@ -3893,7 +4103,39 @@ def test_unknown_suggestion_returns_404(api_client, submitted):
 Run: `pytest tests/test_api_suggestions.py -v`
 Expected: FAIL — endpoint trả 404 vì router chưa tồn tại
 
-- [ ] **Step 3: Viết `backend/app/routers/suggestions.py`**
+- [ ] **Step 3: Thêm schema hàng đợi duyệt vào cuối `backend/app/schemas.py`**
+
+```python
+class SuggestionContextOut(BaseModel):
+    """Suggestion kèm ngữ cảnh để trang duyệt không phải gọi thêm API."""
+
+    id: int
+    report_id: int
+    employee_name: str
+    week_start: date
+    suggested_kpi_id: int | None = None
+    suggested_delta: float | None = None
+    suggested_task_id: int | None = None
+    raw_text: str | None = None
+    evidence: str | None = None
+
+
+class SuggestionQueueOut(BaseModel):
+    kpi_updates: list[SuggestionContextOut]
+    task_completions: list[SuggestionContextOut]
+
+
+class KpiApproveIn(BaseModel):
+    final_kpi_id: int
+    final_delta: float
+    note: str | None = None
+
+
+class TaskApproveIn(BaseModel):
+    final_task_id: int
+```
+
+- [ ] **Step 4: Viết `backend/app/routers/suggestions.py`**
 
 ```python
 from fastapi import APIRouter, Depends, Query
@@ -4003,7 +4245,7 @@ def reject_task(
     return reject_task_suggestion(db, suggestion_id=suggestion_id)
 ```
 
-- [ ] **Step 4: Gắn router vào `backend/app/main.py`**
+- [ ] **Step 5: Gắn router vào `backend/app/main.py`**
 
 ```python
 from app.routers import employees, kpis, reports, suggestions, tasks
@@ -4011,15 +4253,15 @@ from app.routers import employees, kpis, reports, suggestions, tasks
 app.include_router(suggestions.router)
 ```
 
-- [ ] **Step 5: Chạy test để xác nhận nó pass**
+- [ ] **Step 6: Chạy test để xác nhận nó pass**
 
 Run: `pytest tests/test_api_suggestions.py tests/test_api_reports.py -v`
-Expected: PASS (9 + 6 test — cả hai test bị hoãn ở Task 12 giờ cũng pass)
+Expected: PASS (10 test trong test_api_suggestions.py + 7 test trong test_api_reports.py)
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add backend/app/routers/suggestions.py backend/app/main.py backend/tests/test_api_suggestions.py
+git add backend/app/routers/suggestions.py backend/app/schemas.py backend/app/main.py backend/tests/test_api_suggestions.py backend/tests/test_api_reports.py
 git commit -m "feat(backend): router hang doi duyet de xuat KPI va task"
 ```
 
@@ -4029,6 +4271,7 @@ git commit -m "feat(backend): router hang doi duyet de xuat KPI va task"
 
 **Files:**
 - Create: `backend/app/routers/dashboard.py`, `backend/README.md`
+- Modify: `backend/app/schemas.py` (thêm schema dashboard ở cuối file)
 - Modify: `backend/app/main.py` (gắn router `dashboard`)
 - Test: `backend/tests/test_api_dashboard.py`, `backend/tests/test_end_to_end.py`
 
@@ -4156,7 +4399,25 @@ def test_full_cycle_from_kpi_to_dashboard(api_client):
 Run: `pytest tests/test_api_dashboard.py tests/test_end_to_end.py -v`
 Expected: FAIL — `GET /api/dashboard` trả 404
 
-- [ ] **Step 3: Viết `backend/app/routers/dashboard.py`**
+- [ ] **Step 3: Thêm schema dashboard vào cuối `backend/app/schemas.py`**
+
+```python
+class DashboardItemOut(BaseModel):
+    kpi_id: int
+    kpi_name: str
+    unit: str
+    owner_name: str
+    period_start: date
+    period_end: date
+    actual_value: float
+    target_value: float
+    expected_value: float
+    percent_complete: float
+    status: str
+    at_risk: bool
+```
+
+- [ ] **Step 4: Viết `backend/app/routers/dashboard.py`**
 
 ```python
 from datetime import date
@@ -4194,7 +4455,7 @@ def get_dashboard(db: Session = Depends(get_db)) -> list[DashboardItemOut]:
     ]
 ```
 
-- [ ] **Step 4: Gắn router vào `backend/app/main.py`**
+- [ ] **Step 5: Gắn router vào `backend/app/main.py`**
 
 ```python
 from app.routers import dashboard, employees, kpis, reports, suggestions, tasks
@@ -4202,17 +4463,17 @@ from app.routers import dashboard, employees, kpis, reports, suggestions, tasks
 app.include_router(dashboard.router)
 ```
 
-- [ ] **Step 5: Chạy test để xác nhận nó pass**
+- [ ] **Step 6: Chạy test để xác nhận nó pass**
 
 Run: `pytest tests/test_api_dashboard.py tests/test_end_to_end.py -v`
 Expected: PASS (4 test)
 
-- [ ] **Step 6: Chạy toàn bộ bộ test**
+- [ ] **Step 7: Chạy toàn bộ bộ test**
 
 Run: `pytest -v`
 Expected: PASS toàn bộ, không có test nào bị skip
 
-- [ ] **Step 7: Viết `backend/README.md`**
+- [ ] **Step 8: Viết `backend/README.md`**
 
 ```markdown
 # Backend — API báo cáo tuần & KPI
@@ -4259,10 +4520,10 @@ Mặc định là `mock`. Model mặc định là `claude-sonnet-5`.
 Xem `docs/superpowers/specs/2026-09-11-kpi-report-ai-design.md`.
 ```
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add backend/app/routers/dashboard.py backend/app/main.py backend/README.md backend/tests/test_api_dashboard.py backend/tests/test_end_to_end.py
+git add backend/app/routers/dashboard.py backend/app/schemas.py backend/app/main.py backend/README.md backend/tests/test_api_dashboard.py backend/tests/test_end_to_end.py
 git commit -m "feat(backend): router dashboard, test tron vong va huong dan chay"
 ```
 

@@ -209,6 +209,9 @@ trạng thái suggestion đã `approved` mà sổ cái thiếu dòng tương ứ
 `final_kpi_id` bắt buộc phải khác `null` khi duyệt — đây là chỗ quản lý gán KPI
 cho những đề xuất LLM trả về `kpi_id = null`.
 
+`final_delta` bắt buộc phải là số hữu hạn; một giá trị không hữu hạn (vô cực
+hoặc NaN) bị từ chối với **HTTP 422** và không mutation nào được thực hiện.
+
 `POST /api/suggestions/kpi/{id}/reject`: đặt `status = rejected`, không sinh dòng
 sổ cái nào.
 
