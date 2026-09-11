@@ -3911,6 +3911,8 @@ git commit -m "feat(backend): router nop bao cao, xem va trich lai"
 ```python
 import pytest
 
+from app.models import KpiProgressEntry
+
 
 @pytest.fixture
 def submitted(api_client):
@@ -4044,6 +4046,38 @@ def test_rejecting_task_suggestion_leaves_task_todo(api_client, submitted):
 
 def test_unknown_suggestion_returns_404(api_client, submitted):
     assert api_client.post("/api/suggestions/kpi/999999/reject").status_code == 404
+
+
+def test_approving_can_reassign_to_a_different_kpi(api_client, db_session, submitted):
+    """`final_kpi_id` là nguồn sự thật, không phải KPI mà LLM đoán.
+
+    Đây cũng chính là cơ chế quản lý dùng để gán KPI cho một đề xuất mà LLM
+    trả về `kpi_id = null`: sổ cái phải ghi vào KPI quản lý chọn.
+    """
+    other = api_client.post(
+        "/api/kpis",
+        json={
+            "name": "Doanh thu",
+            "target_value": 1000.0,
+            "unit": "trieu",
+            "owner_id": submitted["employee"]["id"],
+            "period_start": "2026-01-01",
+            "period_end": "2026-12-31",
+        },
+    ).json()
+    suggestion = submitted["report"]["kpi_suggestions"][0]
+    assert suggestion["suggested_kpi_id"] == submitted["kpi"]["id"]
+
+    body = api_client.post(
+        f"/api/suggestions/kpi/{suggestion['id']}/approve",
+        json={"final_kpi_id": other["id"], "final_delta": 5.0},
+    ).json()
+
+    assert body["suggested_kpi_id"] == submitted["kpi"]["id"]  # bản gốc còn nguyên
+    assert body["final_kpi_id"] == other["id"]
+
+    entry = db_session.query(KpiProgressEntry).one()
+    assert entry.kpi_id == other["id"]
 ```
 
 Và thêm vào **cuối** `backend/tests/test_api_reports.py` (file của Task 12) test
