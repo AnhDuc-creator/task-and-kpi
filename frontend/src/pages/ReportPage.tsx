@@ -27,6 +27,7 @@ export default function ReportPage() {
   const [rawText, setRawText] = useState('')
   const [submitError, setSubmitError] = useState<unknown>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [reextracting, setReextracting] = useState(false)
   const [result, setResult] = useState<Report | null>(null)
 
   // Mặc định theo nhân viên đang chọn ở header, nhưng vẫn cho đổi tại chỗ.
@@ -63,11 +64,14 @@ export default function ReportPage() {
 
   async function reextract(id: number) {
     setSubmitError(null)
+    setReextracting(true)
     try {
       setResult(await reextractReport(id))
       reports.reload()
     } catch (caught) {
       setSubmitError(caught)
+    } finally {
+      setReextracting(false)
     }
   }
 
@@ -134,9 +138,10 @@ export default function ReportPage() {
               type="button"
               className="secondary"
               data-testid="report-reextract"
+              disabled={reextracting}
               onClick={() => reextract(result.id)}
             >
-              Trích lại
+              {reextracting ? 'Đang trích lại…' : 'Trích lại'}
             </button>
           </div>
 
