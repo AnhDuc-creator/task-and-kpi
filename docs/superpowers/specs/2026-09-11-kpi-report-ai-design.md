@@ -174,8 +174,9 @@ Các ca biên, quy định rõ:
 **Điều kiện cho phép** — thoả *một trong hai*:
 
 - `extraction_status = failed`; hoặc
-- báo cáo **chưa có suggestion nào ở trạng thái `approved`** (không phân biệt
-  suggestion KPI hay suggestion task).
+- báo cáo **chưa có suggestion nào ở trạng thái `approved`**. Điều kiện này quét
+  **cả hai bảng** `kpi_update_suggestions` và `task_completion_suggestions`: chỉ
+  cần một dòng `approved` ở một trong hai bảng là điều kiện không thoả.
 
 Ngược lại → **HTTP 409**, không thay đổi gì. Trên thực tế, điều này có nghĩa: chỉ
 cần một dòng đã được duyệt là báo cáo bị khoá khỏi việc trích lại, vì số liệu đã
@@ -201,7 +202,9 @@ với đề xuất đang hiển thị.
    `delta_value = final_delta`, `source_suggestion_id = suggestion.id`,
    `effective_date = report.week_start`.
 
-Cả hai bước nằm trong **một giao dịch**.
+Bước 2 và bước 3 nằm trong **một giao dịch duy nhất**: đổi `status` và ghi dòng
+`kpi_progress_entries` cùng commit hoặc cùng rollback. Không bao giờ tồn tại
+trạng thái suggestion đã `approved` mà sổ cái thiếu dòng tương ứng, hay ngược lại.
 
 `final_kpi_id` bắt buộc phải khác `null` khi duyệt — đây là chỗ quản lý gán KPI
 cho những đề xuất LLM trả về `kpi_id = null`.
@@ -214,6 +217,9 @@ sổ cái nào.
 cho task đó. `final_task_id` bắt buộc khác `null` — đây là chỗ quản lý gán task
 cho đề xuất LLM trả về `task_id = null`, hoặc sửa lại khi LLM khớp nhầm. Từ chối
 thì không đổi gì trên bảng `tasks`. Cùng luật 409 khi suggestion không còn `pending`.
+
+Việc đổi `status` của suggestion và cập nhật `tasks` cũng nằm trong **một giao
+dịch duy nhất**, theo cùng nguyên tắc như duyệt suggestion KPI.
 
 Duyệt một task đã ở trạng thái `done` là hợp lệ và không có tác dụng phụ nào
 ngoài việc ghi nhận suggestion — `completed_at` giữ nguyên giá trị cũ.
