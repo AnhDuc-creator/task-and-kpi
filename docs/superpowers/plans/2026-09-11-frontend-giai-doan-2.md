@@ -17,7 +17,8 @@
 - Frontend chỉ được mở qua `http://localhost:5173`. **Không dùng `127.0.0.1:5173`** — backend chỉ mở CORS cho đúng origin `http://localhost:5173` (`backend/app/main.py:29`), và `127.0.0.1` là một origin khác.
 - `vite.config.ts` phải đặt `strictPort: true`. Nếu 5173 bị chiếm, Vite phải báo lỗi chứ không được nhảy sang 5174 — cổng 5174 sẽ trượt CORS và tạo ra lỗi rất khó lần.
 - `API_BASE` mặc định là `http://127.0.0.1:8000` (host đích không ảnh hưởng CORS; chỉ origin của trang mới ảnh hưởng).
-- `percent_complete` do backend trả về là **phân số trong khoảng 0–1**, không phải số phần trăm (`backend/app/rules.py:69`: `percent_complete = actual_value / target_value`). Mọi chỗ hiển thị phải nhân 100.
+- `percent_complete` do backend trả về là **phân số**, không phải số phần trăm. Mọi chỗ hiển thị phải nhân 100. Bằng chứng, không phải suy đoán: `backend/app/rules.py:70` tính `percent_complete = actual_value / target_value`, và test backend khẳng định thang này — `backend/tests/test_rules.py:90` chốt `actual=100, target=100 → 1.0`, `test_rules.py:101` chốt `actual=120, target=100 → 1.2` (không kẹp trên 1). Nói cách khác `1.0` nghĩa là 100%.
+- Frontend chạy trên Windows. `scripts/with_server.py` spawn server bằng `shell=True`, nên lệnh được đưa qua `cmd.exe /c` và `npm` tự phân giải thành `npm.cmd` — **không** cần gọi `npm.cmd` tường minh, và **không** được sửa `with_server.py` vì lý do này. Lệnh đổi thư mục phải là `cd /d` (có `/d`) để chuyển được cả ổ đĩa.
 - Phần trăm **hiển thị** không kẹp trên 100 (spec gốc §6 quy định rõ). Chỉ hình học thanh tiến độ mới kẹp trong 0–100.
 - `final_kpi_id` và `final_task_id` bắt buộc khác `null` khi duyệt (spec gốc §7.4) → nút Duyệt phải bị vô hiệu khi người dùng chưa chọn.
 - Không thêm react-query hay bất kỳ state manager nào (spec gốc §10).
@@ -2433,6 +2434,12 @@ Ba việc phải làm trước khi giao cho `with_server.py`:
    sót và tiếp tục giữ cổng. Không dọn thì lần chạy thứ hai chết ở
    "Server failed to start".
 3. Đặt DATABASE_URL và LLM_PROVIDER cho tiến trình con.
+
+Về `npm` trên Windows: `with_server.py` dùng `shell=True`, nên lệnh chạy qua
+`cmd.exe /c` và `npm` được phân giải thành `npm.cmd` mà không cần gọi tường
+minh. Dùng `cd /d` (có `/d`) để chuyển được cả ổ đĩa. `subprocess.run(..., env=env)`
+ở dưới truyền env xuống `with_server.py`, và `with_server.py` spawn con bằng
+`Popen` không đặt `env=`, nên hai server đều thừa hưởng DATABASE_URL.
 """
 
 from __future__ import annotations
@@ -2591,9 +2598,12 @@ def main() -> None:
             page.goto(f"{BASE_URL}/dashboard")
             page.wait_for_load_state("networkidle")
             expect(page.get_by_test_id("kpi-card")).to_have_count(1)
-            expect(page.get_by_test_id("kpi-card-status")).to_have_text("Có nguy cơ")
+            # percent_complete = actual/target = 0/100 = 0.0, và formatPercent nhân
+            # 100 (thang phân số được test_rules.py:90/101 chốt), nên đúng "0%".
             expect(page.get_by_test_id("kpi-card-percent")).to_have_text("0%")
-            print("OK  Dashboard truoc khi duyet: Co nguy co, 0%")
+            expect(page.get_by_test_id("kpi-card-actual")).to_have_text("0 / 100 trieu")
+            expect(page.get_by_test_id("kpi-card-status")).to_have_text("Có nguy cơ")
+            print("OK  Dashboard truoc khi duyet: 0%, 0/100, Co nguy co")
 
             # --- Nộp báo cáo ---------------------------------------------------
             page.goto(f"{BASE_URL}/report")
@@ -2629,11 +2639,15 @@ def main() -> None:
             # --- Dashboard sau khi duyệt: đổi số và tắt cảnh báo ----------------
             page.goto(f"{BASE_URL}/dashboard")
             page.wait_for_load_state("networkidle")
+            # actual/target = 100/100 = 1.0 → "100%". Đây chính là ca mà
+            # test_rules.py:90 khẳng định percent_complete == 1.0.
             expect(page.get_by_test_id("kpi-card-percent")).to_have_text("100%")
             expect(page.get_by_test_id("kpi-card-actual")).to_have_text("100 / 100 trieu")
             expect(page.get_by_test_id("kpi-card-status")).to_have_text("Hoàn thành")
+            # Cảnh báo đã tắt: không còn thẻ nào mang nhãn "Có nguy cơ".
+            expect(page.get_by_text("Có nguy cơ")).to_have_count(0)
             expect(page.get_by_test_id("dashboard-blocker")).to_have_count(1)
-            print("OK  Dashboard sau khi duyet: 100%, Hoan thanh, canh bao da tat")
+            print("OK  Dashboard sau khi duyet: 100%, 100/100, Hoan thanh, canh bao da tat")
 
             page.screenshot(path="tests/e2e/dashboard-sau-khi-duyet.png", full_page=True)
             print("\nTRON VONG THANH CONG")
