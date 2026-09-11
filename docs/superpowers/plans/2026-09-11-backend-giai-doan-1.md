@@ -14,7 +14,7 @@
 
 - Tên biến, hàm, class, bảng, trường: **tiếng Anh**. Tài liệu, comment giải thích nghiệp vụ, thông điệp lỗi hướng người dùng: **tiếng Việt**.
 - `LLM_PROVIDER` mặc định là `mock`. **Không test nào được gọi mạng.**
-- Model Anthropic: đọc từ biến môi trường `ANTHROPIC_MODEL`, mặc định `claude-sonnet-5`. Không hardcode tên model ở bất kỳ đâu ngoài giá trị mặc định trong `config.py`.
+- Model Anthropic: đọc từ biến môi trường `ANTHROPIC_MODEL`, mặc định `claude-sonnet-5`. Code ứng dụng (provider, factory, router) **không** được hardcode tên model — nó chỉ xuất hiện ở giá trị mặc định trong `config.py`, trong `.env.example`, và trong test khẳng định chính giá trị mặc định đó.
 - Ngưỡng cảnh báo rủi ro là hằng số có tên `RISK_THRESHOLD = 0.8`, không viết số `0.8` rải rác.
 - "Hôm nay" luôn được tiêm vào hàm qua tham số `today: date`; **không** gọi `date.today()` trong `rules.py` hay trong service.
 - `current_value` **không** được lưu thành cột trên bảng `kpis`.
@@ -2977,7 +2977,7 @@ git commit -m "feat(backend): service dashboard tinh current_value tu so cai"
 
 **Files:**
 - Create: `backend/app/schemas.py`, `backend/app/routers/__init__.py`, `backend/app/routers/employees.py`, `backend/app/routers/kpis.py`, `backend/app/routers/tasks.py`
-- Modify: `backend/app/main.py` (gắn router và exception handler)
+- Modify: `backend/app/main.py` (gắn router và exception handler), `backend/tests/conftest.py` (thêm fixture `api_client`)
 - Test: `backend/tests/test_api_crud.py`
 
 **Interfaces:**
@@ -3147,7 +3147,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.models import SuggestionStatus, TaskStatus
+from app.models import TaskStatus
 
 
 class EmployeeCreate(BaseModel):
@@ -3220,104 +3220,12 @@ class TaskOut(BaseModel):
     completed_at: datetime | None
 
 
-class ReportCreate(BaseModel):
-    employee_id: int
-    week_start: date
-    raw_text: str = Field(min_length=1)
-
-
-class KpiSuggestionOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    report_id: int
-    suggested_kpi_id: int | None
-    suggested_delta: float
-    evidence: str
-    status: SuggestionStatus
-    final_kpi_id: int | None
-    final_delta: float | None
-    review_note: str | None
-
-
-class TaskSuggestionOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    report_id: int
-    suggested_task_id: int | None
-    raw_text: str
-    status: SuggestionStatus
-    final_task_id: int | None
-
-
-class BlockerOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    report_id: int
-    description: str
-    related_kpi_id: int | None
-
-
-class ReportOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    employee_id: int
-    week_start: date
-    raw_text: str
-    extraction_status: str
-    extraction_error: str | None
-    provider_name: str | None
-    kpi_suggestions: list[KpiSuggestionOut]
-    task_suggestions: list[TaskSuggestionOut]
-    blockers: list[BlockerOut]
-
-
-class SuggestionContextOut(BaseModel):
-    """Suggestion kèm ngữ cảnh để trang duyệt không phải gọi thêm API."""
-
-    id: int
-    report_id: int
-    employee_name: str
-    week_start: date
-    suggested_kpi_id: int | None = None
-    suggested_delta: float | None = None
-    suggested_task_id: int | None = None
-    raw_text: str | None = None
-    evidence: str | None = None
-
-
-class SuggestionQueueOut(BaseModel):
-    kpi_updates: list[SuggestionContextOut]
-    task_completions: list[SuggestionContextOut]
-
-
-class KpiApproveIn(BaseModel):
-    final_kpi_id: int
-    final_delta: float
-    note: str | None = None
-
-
-class TaskApproveIn(BaseModel):
-    final_task_id: int
-
-
-class DashboardItemOut(BaseModel):
-    kpi_id: int
-    kpi_name: str
-    unit: str
-    owner_name: str
-    period_start: date
-    period_end: date
-    actual_value: float
-    target_value: float
-    expected_value: float
-    percent_complete: float
-    status: str
-    at_risk: bool
 ```
+
+> Chỉ viết đúng các schema mà Task 11 dùng. Schema cho báo cáo, hàng đợi duyệt
+> và dashboard được thêm vào chính file này ở Task 12, 13, 14 — mỗi task chỉ
+> thêm phần nó thực sự dùng, để không có model nào nằm trong repo mà chưa có
+> endpoint nào gọi tới.
 
 - [ ] **Step 5: Tạo `backend/app/routers/__init__.py` rỗng, rồi viết ba router**
 
@@ -3520,6 +3428,7 @@ git commit -m "feat(backend): router CRUD employee, KPI, task va exception handl
 
 **Files:**
 - Create: `backend/app/routers/reports.py`, `backend/app/dependencies.py`
+- Modify: `backend/app/schemas.py` (thêm schema báo cáo ở cuối file)
 - Modify: `backend/app/main.py` (gắn thêm router `reports`)
 - Test: `backend/tests/test_api_reports.py`
 
@@ -3614,28 +3523,90 @@ def test_reextract_replaces_pending_suggestions(api_client, seeded):
     assert new_id != old_id
 
 
-def test_reextract_blocked_after_approval_returns_409(api_client, seeded):
-    created = submit(api_client, seeded["employee"]["id"]).json()
-    suggestion = created["kpi_suggestions"][0]
-    approved = api_client.post(
-        f"/api/suggestions/kpi/{suggestion['id']}/approve",
-        json={"final_kpi_id": seeded["kpi"]["id"], "final_delta": 5.0},
-    )
-    assert approved.status_code == 200
+def test_failed_extraction_is_reported(api_client, seeded):
+    """Nhân viên không có KPI/Task nào -> mock không trích được gì, nhưng vẫn
+    là một lần trích xuất thành công với danh sách rỗng."""
+    other = api_client.post(
+        "/api/employees", json={"name": "Tran Thi B", "email": "b@example.com"}
+    ).json()
 
-    response = api_client.post(f"/api/reports/{created['id']}/extract")
+    body = submit(api_client, other["id"], text="Tuan nay hop giao ban.").json()
 
-    assert response.status_code == 409
+    assert body["extraction_status"] == "extracted"
+    assert body["kpi_suggestions"] == []
+    assert body["blockers"] == []
 ```
-
-> Ghi chú: hai test cuối cần endpoint duyệt của Task 13. Chạy chúng sau khi Task 13 xong; ở Task 12 chỉ cần bốn test đầu pass.
 
 - [ ] **Step 2: Chạy test để xác nhận nó thất bại**
 
-Run: `pytest tests/test_api_reports.py -v -k "not approval"`
+Run: `pytest tests/test_api_reports.py -v`
 Expected: FAIL — `POST /api/reports` trả 404 vì router chưa tồn tại
 
-- [ ] **Step 3: Viết `backend/app/dependencies.py`**
+- [ ] **Step 3: Thêm schema báo cáo vào cuối `backend/app/schemas.py`**
+
+Bổ sung `SuggestionStatus` vào dòng `from app.models import ...`, rồi thêm:
+
+```python
+class ReportCreate(BaseModel):
+    employee_id: int
+    week_start: date
+    raw_text: str = Field(min_length=1)
+
+
+class KpiSuggestionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    report_id: int
+    suggested_kpi_id: int | None
+    suggested_delta: float
+    evidence: str
+    status: SuggestionStatus
+    final_kpi_id: int | None
+    final_delta: float | None
+    review_note: str | None
+
+
+class TaskSuggestionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    report_id: int
+    suggested_task_id: int | None
+    raw_text: str
+    status: SuggestionStatus
+    final_task_id: int | None
+
+
+class BlockerOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    report_id: int
+    description: str
+    related_kpi_id: int | None
+
+
+class ReportOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    employee_id: int
+    week_start: date
+    raw_text: str
+    extraction_status: ExtractionStatus
+    extraction_error: str | None
+    provider_name: str | None
+    kpi_suggestions: list[KpiSuggestionOut]
+    task_suggestions: list[TaskSuggestionOut]
+    blockers: list[BlockerOut]
+```
+
+`extraction_status` và `status` khai báo bằng kiểu enum chứ không phải `str`, để
+Pydantic luôn serialize ra giá trị (`"extracted"`, `"pending"`) một cách xác định.
+Nhớ thêm cả `ExtractionStatus` vào dòng import từ `app.models`.
+
+- [ ] **Step 4: Viết `backend/app/dependencies.py`**
 
 ```python
 """Dependency dùng chung. Tách riêng để test ghi đè được provider."""
@@ -3649,7 +3620,7 @@ def get_llm_provider() -> LlmProvider:
     return get_provider(get_settings())
 ```
 
-- [ ] **Step 4: Viết `backend/app/routers/reports.py`**
+- [ ] **Step 5: Viết `backend/app/routers/reports.py`**
 
 ```python
 from fastapi import APIRouter, Depends, status
@@ -3711,7 +3682,7 @@ def reextract(
     return reextract_report(db, report, provider)
 ```
 
-- [ ] **Step 5: Gắn router vào `backend/app/main.py`**
+- [ ] **Step 6: Gắn router vào `backend/app/main.py`**
 
 Thêm `reports` vào dòng import và thêm `app.include_router(reports.router)` ở cuối file:
 
@@ -3721,12 +3692,12 @@ from app.routers import employees, kpis, reports, tasks
 app.include_router(reports.router)
 ```
 
-- [ ] **Step 6: Chạy test để xác nhận bốn test đầu pass**
+- [ ] **Step 7: Chạy test để xác nhận nó pass**
 
-Run: `pytest tests/test_api_reports.py -v -k "not approval"`
-Expected: PASS (5 test: 4 test đầu + `test_reextract_replaces_pending_suggestions`)
+Run: `pytest tests/test_api_reports.py -v`
+Expected: PASS (6 test)
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add backend/app/dependencies.py backend/app/routers/reports.py backend/app/main.py backend/tests/test_api_reports.py
@@ -3739,8 +3710,9 @@ git commit -m "feat(backend): router nop bao cao, xem va trich lai"
 
 **Files:**
 - Create: `backend/app/routers/suggestions.py`
+- Modify: `backend/app/schemas.py` (thêm schema hàng đợi duyệt ở cuối file)
 - Modify: `backend/app/main.py` (gắn router `suggestions`)
-- Test: `backend/tests/test_api_suggestions.py`
+- Test: `backend/tests/test_api_suggestions.py`, `backend/tests/test_api_reports.py` (thêm một test ở cuối)
 
 **Interfaces:**
 - Consumes: `app.services.approval.*`, `app.schemas.SuggestionQueueOut`, `SuggestionContextOut`, `KpiApproveIn`, `TaskApproveIn`
@@ -3888,12 +3860,62 @@ def test_unknown_suggestion_returns_404(api_client, submitted):
     assert api_client.post("/api/suggestions/kpi/999999/reject").status_code == 404
 ```
 
+Và thêm vào **cuối** `backend/tests/test_api_reports.py` (file của Task 12) test
+khoá trích lại — nó cần endpoint duyệt nên chỉ chạy được từ task này:
+
+```python
+def test_reextract_blocked_after_approval_returns_409(api_client, seeded):
+    created = submit(api_client, seeded["employee"]["id"]).json()
+    suggestion = created["kpi_suggestions"][0]
+    approved = api_client.post(
+        f"/api/suggestions/kpi/{suggestion['id']}/approve",
+        json={"final_kpi_id": seeded["kpi"]["id"], "final_delta": 5.0},
+    )
+    assert approved.status_code == 200
+
+    response = api_client.post(f"/api/reports/{created['id']}/extract")
+
+    assert response.status_code == 409
+```
+
 - [ ] **Step 2: Chạy test để xác nhận nó thất bại**
 
 Run: `pytest tests/test_api_suggestions.py -v`
 Expected: FAIL — endpoint trả 404 vì router chưa tồn tại
 
-- [ ] **Step 3: Viết `backend/app/routers/suggestions.py`**
+- [ ] **Step 3: Thêm schema hàng đợi duyệt vào cuối `backend/app/schemas.py`**
+
+```python
+class SuggestionContextOut(BaseModel):
+    """Suggestion kèm ngữ cảnh để trang duyệt không phải gọi thêm API."""
+
+    id: int
+    report_id: int
+    employee_name: str
+    week_start: date
+    suggested_kpi_id: int | None = None
+    suggested_delta: float | None = None
+    suggested_task_id: int | None = None
+    raw_text: str | None = None
+    evidence: str | None = None
+
+
+class SuggestionQueueOut(BaseModel):
+    kpi_updates: list[SuggestionContextOut]
+    task_completions: list[SuggestionContextOut]
+
+
+class KpiApproveIn(BaseModel):
+    final_kpi_id: int
+    final_delta: float
+    note: str | None = None
+
+
+class TaskApproveIn(BaseModel):
+    final_task_id: int
+```
+
+- [ ] **Step 4: Viết `backend/app/routers/suggestions.py`**
 
 ```python
 from fastapi import APIRouter, Depends, Query
@@ -4003,7 +4025,7 @@ def reject_task(
     return reject_task_suggestion(db, suggestion_id=suggestion_id)
 ```
 
-- [ ] **Step 4: Gắn router vào `backend/app/main.py`**
+- [ ] **Step 5: Gắn router vào `backend/app/main.py`**
 
 ```python
 from app.routers import employees, kpis, reports, suggestions, tasks
@@ -4011,15 +4033,15 @@ from app.routers import employees, kpis, reports, suggestions, tasks
 app.include_router(suggestions.router)
 ```
 
-- [ ] **Step 5: Chạy test để xác nhận nó pass**
+- [ ] **Step 6: Chạy test để xác nhận nó pass**
 
 Run: `pytest tests/test_api_suggestions.py tests/test_api_reports.py -v`
-Expected: PASS (9 + 6 test — cả hai test bị hoãn ở Task 12 giờ cũng pass)
+Expected: PASS (10 test trong test_api_suggestions.py + 7 test trong test_api_reports.py)
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add backend/app/routers/suggestions.py backend/app/main.py backend/tests/test_api_suggestions.py
+git add backend/app/routers/suggestions.py backend/app/schemas.py backend/app/main.py backend/tests/test_api_suggestions.py backend/tests/test_api_reports.py
 git commit -m "feat(backend): router hang doi duyet de xuat KPI va task"
 ```
 
@@ -4029,6 +4051,7 @@ git commit -m "feat(backend): router hang doi duyet de xuat KPI va task"
 
 **Files:**
 - Create: `backend/app/routers/dashboard.py`, `backend/README.md`
+- Modify: `backend/app/schemas.py` (thêm schema dashboard ở cuối file)
 - Modify: `backend/app/main.py` (gắn router `dashboard`)
 - Test: `backend/tests/test_api_dashboard.py`, `backend/tests/test_end_to_end.py`
 
@@ -4156,7 +4179,25 @@ def test_full_cycle_from_kpi_to_dashboard(api_client):
 Run: `pytest tests/test_api_dashboard.py tests/test_end_to_end.py -v`
 Expected: FAIL — `GET /api/dashboard` trả 404
 
-- [ ] **Step 3: Viết `backend/app/routers/dashboard.py`**
+- [ ] **Step 3: Thêm schema dashboard vào cuối `backend/app/schemas.py`**
+
+```python
+class DashboardItemOut(BaseModel):
+    kpi_id: int
+    kpi_name: str
+    unit: str
+    owner_name: str
+    period_start: date
+    period_end: date
+    actual_value: float
+    target_value: float
+    expected_value: float
+    percent_complete: float
+    status: str
+    at_risk: bool
+```
+
+- [ ] **Step 4: Viết `backend/app/routers/dashboard.py`**
 
 ```python
 from datetime import date
@@ -4194,7 +4235,7 @@ def get_dashboard(db: Session = Depends(get_db)) -> list[DashboardItemOut]:
     ]
 ```
 
-- [ ] **Step 4: Gắn router vào `backend/app/main.py`**
+- [ ] **Step 5: Gắn router vào `backend/app/main.py`**
 
 ```python
 from app.routers import dashboard, employees, kpis, reports, suggestions, tasks
@@ -4202,17 +4243,17 @@ from app.routers import dashboard, employees, kpis, reports, suggestions, tasks
 app.include_router(dashboard.router)
 ```
 
-- [ ] **Step 5: Chạy test để xác nhận nó pass**
+- [ ] **Step 6: Chạy test để xác nhận nó pass**
 
 Run: `pytest tests/test_api_dashboard.py tests/test_end_to_end.py -v`
 Expected: PASS (4 test)
 
-- [ ] **Step 6: Chạy toàn bộ bộ test**
+- [ ] **Step 7: Chạy toàn bộ bộ test**
 
 Run: `pytest -v`
 Expected: PASS toàn bộ, không có test nào bị skip
 
-- [ ] **Step 7: Viết `backend/README.md`**
+- [ ] **Step 8: Viết `backend/README.md`**
 
 ```markdown
 # Backend — API báo cáo tuần & KPI
@@ -4259,10 +4300,10 @@ Mặc định là `mock`. Model mặc định là `claude-sonnet-5`.
 Xem `docs/superpowers/specs/2026-09-11-kpi-report-ai-design.md`.
 ```
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add backend/app/routers/dashboard.py backend/app/main.py backend/README.md backend/tests/test_api_dashboard.py backend/tests/test_end_to_end.py
+git add backend/app/routers/dashboard.py backend/app/schemas.py backend/app/main.py backend/README.md backend/tests/test_api_dashboard.py backend/tests/test_end_to_end.py
 git commit -m "feat(backend): router dashboard, test tron vong va huong dan chay"
 ```
 
