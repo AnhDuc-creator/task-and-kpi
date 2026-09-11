@@ -2241,14 +2241,19 @@ def test_failed_report_can_be_reextracted(db_session, seeded):
 
 
 def test_extracted_report_without_approvals_can_be_reextracted(db_session, seeded):
+    """Đánh dấu dòng cũ rồi kiểm dòng còn lại không mang dấu đó.
+
+    Không so sánh id: SQLite cấp lại khoá chính khi bảng bị xoá sạch, nên
+    id trùng nhau là chuyện bình thường và không nói lên điều gì.
+    """
     report = make_report(db_session, seeded, MockProvider())
-    old_ids = {s.id for s in report.kpi_suggestions}
+    report.kpi_suggestions[0].evidence = "DAU VET CU"
+    db_session.commit()
 
     report = reextract_report(db_session, report, MockProvider())
 
-    new_ids = {s.id for s in report.kpi_suggestions}
-    assert new_ids.isdisjoint(old_ids)
     assert len(report.kpi_suggestions) == 1
+    assert report.kpi_suggestions[0].evidence != "DAU VET CU"
 
 
 def test_reextraction_deletes_pending_suggestions(db_session, seeded):
@@ -2281,13 +2286,15 @@ def test_reextraction_keeps_rejected_suggestions(db_session, seeded):
 
 
 def test_reextraction_recreates_blockers(db_session, seeded):
+    """Blocker cũ bị xoá và tạo lại — kiểm bằng nội dung, không bằng id."""
     report = make_report(db_session, seeded, MockProvider())
-    old_ids = {b.id for b in report.blockers}
+    report.blockers[0].description = "DAU VET CU"
+    db_session.commit()
 
     report = reextract_report(db_session, report, MockProvider())
 
     assert len(report.blockers) == 1
-    assert {b.id for b in report.blockers}.isdisjoint(old_ids)
+    assert report.blockers[0].description != "DAU VET CU"
     assert db_session.query(Blocker).count() == 1
 
 
