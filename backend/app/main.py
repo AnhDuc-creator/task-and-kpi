@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.db import Base, engine
-from app.errors import ConflictError, NotFoundError
+from app.errors import ConflictError, InvalidInputError, NotFoundError
 from app.routers import employees, kpis, tasks
 
 
@@ -36,6 +36,11 @@ def handle_not_found(request: Request, exc: NotFoundError) -> JSONResponse:
 @app.exception_handler(ConflictError)
 def handle_conflict(request: Request, exc: ConflictError) -> JSONResponse:
     return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(InvalidInputError)
+def handle_invalid_input(request: Request, exc: InvalidInputError) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
 @app.get("/api/health")

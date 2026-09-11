@@ -35,7 +35,9 @@ def update_task(
     task = db.get(Task, task_id)
     if task is None:
         raise NotFoundError(f"Không tìm thấy task {task_id}")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    for field, value in payload.model_dump(
+        exclude_unset=True, exclude_none=True
+    ).items():
         setattr(task, field, value)
     db.commit()
     db.refresh(task)

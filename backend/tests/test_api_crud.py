@@ -119,3 +119,40 @@ def test_task_with_unknown_kpi_returns_404(api_client):
         json={"title": "x", "kpi_id": 999999, "assignee_id": employee["id"]},
     )
     assert response.status_code == 404
+
+
+def test_duplicate_email_returns_409(api_client):
+    """Email trùng là xung đột trạng thái, không phải lỗi máy chủ."""
+    create_employee(api_client)
+
+    response = api_client.post(
+        "/api/employees", json={"name": "Nguoi khac", "email": "a@example.com"}
+    )
+
+    assert response.status_code == 409
+    assert len(api_client.get("/api/employees").json()) == 1
+
+
+def test_patch_cannot_create_inverted_period(api_client):
+    """PATCH chỉ đổi một mốc vẫn phải bị chặn nếu tạo ra kỳ ngược."""
+    employee = create_employee(api_client)
+    kpi = create_kpi(api_client, employee["id"])  # 2026-01-01 .. 2026-12-31
+
+    response = api_client.patch(
+        f"/api/kpis/{kpi['id']}", json={"period_end": "2025-01-01"}
+    )
+
+    assert response.status_code == 422
+    unchanged = api_client.get(f"/api/kpis/{kpi['id']}").json()
+    assert unchanged["period_end"] == "2026-12-31"
+
+
+def test_patch_with_explicit_null_is_ignored(api_client):
+    """Gửi null tường minh cho một trường không nullable thì bỏ qua, không 500."""
+    employee = create_employee(api_client)
+    kpi = create_kpi(api_client, employee["id"])
+
+    response = api_client.patch(f"/api/kpis/{kpi['id']}", json={"target_value": None})
+
+    assert response.status_code == 200
+    assert response.json()["target_value"] == 100.0

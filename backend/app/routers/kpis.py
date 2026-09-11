@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.errors import NotFoundError
+from app.errors import InvalidInputError, NotFoundError
 from app.models import Employee, Kpi
 from app.schemas import KpiCreate, KpiOut, KpiUpdate
 
@@ -41,8 +41,22 @@ def update_kpi(
     kpi = db.get(Kpi, kpi_id)
     if kpi is None:
         raise NotFoundError(f"Không tìm thấy KPI {kpi_id}")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+
+    # exclude_none: PATCH là cập nhật một phần, không trường nào ở đây được
+    # phép thành null. Gửi null tường minh coi như không gửi.
+    for field, value in payload.model_dump(
+        exclude_unset=True, exclude_none=True
+    ).items():
         setattr(kpi, field, value)
+
+    # Kiểm sau khi đã trộn với giá trị đang lưu: PATCH chỉ đổi một trong hai
+    # mốc thời gian vẫn có thể tạo ra kỳ ngược. Kỳ ngược khiến
+    # compute_elapsed_ratio coi như kỳ dài 0 ngày và trả 1.0, làm KPI bị
+    # cảnh báo "có nguy cơ" oan.
+    if kpi.period_end < kpi.period_start:
+        db.rollback()
+        raise InvalidInputError("period_end phải không nhỏ hơn period_start")
+
     db.commit()
     db.refresh(kpi)
     return kpi
