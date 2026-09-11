@@ -14,10 +14,11 @@
 
 - Tên biến, hàm, class, bảng, trường: **tiếng Anh**. Tài liệu, comment giải thích nghiệp vụ, thông điệp lỗi hướng người dùng: **tiếng Việt**.
 - `LLM_PROVIDER` mặc định là `mock`. **Không test nào được gọi mạng.**
-- Model Anthropic: `claude-opus-5` (chuỗi id chính xác, không thêm hậu tố ngày).
+- Model Anthropic: đọc từ biến môi trường `ANTHROPIC_MODEL`, mặc định `claude-sonnet-5`. Không hardcode tên model ở bất kỳ đâu ngoài giá trị mặc định trong `config.py`.
 - Ngưỡng cảnh báo rủi ro là hằng số có tên `RISK_THRESHOLD = 0.8`, không viết số `0.8` rải rác.
 - "Hôm nay" luôn được tiêm vào hàm qua tham số `today: date`; **không** gọi `date.today()` trong `rules.py` hay trong service.
 - `current_value` **không** được lưu thành cột trên bảng `kpis`.
+- `validate_extraction_result` là cổng kiểm tra duy nhất áp lên output của **mọi** provider, và được gọi ở tầng service ngay sau `provider.extract(...)` — không bao giờ gọi bên trong một provider. Nó chặn id ngoài catalog và `delta_value` không hữu hạn; vi phạm → báo cáo `failed`, không tạo suggestion nào.
 - Trường `suggested_*` không bao giờ bị ghi đè; sửa của quản lý đi vào `final_*`.
 - Mã lỗi: `404` không tìm thấy, `409` xung đột trạng thái, `422` dữ liệu vào sai.
 - MVP chỉ hỗ trợ KPI **càng cao càng tốt**. Không thêm trường `direction` hay nhánh xử lý chiều ngược lại.
@@ -101,7 +102,7 @@ testpaths = ["tests"]
 # anthropic = gọi Claude thật
 LLM_PROVIDER=mock
 ANTHROPIC_API_KEY=
-ANTHROPIC_MODEL=claude-opus-5
+ANTHROPIC_MODEL=claude-sonnet-5
 DATABASE_URL=sqlite:///./kpi.db
 ```
 
@@ -129,9 +130,9 @@ def test_default_provider_is_mock():
     assert settings.llm_provider == "mock"
 
 
-def test_default_model_is_opus_5():
+def test_default_model_is_sonnet_5():
     settings = Settings(_env_file=None)
-    assert settings.anthropic_model == "claude-opus-5"
+    assert settings.anthropic_model == "claude-sonnet-5"
 ```
 
 `backend/tests/test_health.py`:
@@ -172,7 +173,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./kpi.db"
     llm_provider: str = "mock"
     anthropic_api_key: str | None = None
-    anthropic_model: str = "claude-opus-5"
+    anthropic_model: str = "claude-sonnet-5"
 
 
 @lru_cache
@@ -885,7 +886,7 @@ git commit -m "feat(backend): mo hinh du lieu SQLAlchemy va rang buoc unique bao
 
 **Interfaces:**
 - Consumes: (không có)
-- Produces: `app.llm.base.KpiCatalogItem` (`id: int`, `name: str`, `unit: str`, `target_value: float`), `TaskCatalogItem` (`id: int`, `title: str`), `ExtractionRequest` (`report_text: str`, `kpi_catalog: list[KpiCatalogItem]`, `task_catalog: list[TaskCatalogItem]`), `TaskDoneItem` (`task_id: int | None`, `description: str`), `KpiUpdateItem` (`kpi_id: int | None`, `delta_value: float`, `evidence: str`), `BlockerItem` (`description: str`, `related_kpi_id: int | None`), `ExtractionResult` (`tasks_done`, `kpi_updates`, `blockers`), `ExtractionError(Exception)`, `LlmProvider` (Protocol với thuộc tính `name: str` và phương thức `extract(request: ExtractionRequest) -> ExtractionResult`), `validate_result_against_catalog(result: ExtractionResult, request: ExtractionRequest) -> None`
+- Produces: `app.llm.base.KpiCatalogItem` (`id: int`, `name: str`, `unit: str`, `target_value: float`), `TaskCatalogItem` (`id: int`, `title: str`), `ExtractionRequest` (`report_text: str`, `kpi_catalog: list[KpiCatalogItem]`, `task_catalog: list[TaskCatalogItem]`), `TaskDoneItem` (`task_id: int | None`, `description: str`), `KpiUpdateItem` (`kpi_id: int | None`, `delta_value: float`, `evidence: str`), `BlockerItem` (`description: str`, `related_kpi_id: int | None`), `ExtractionResult` (`tasks_done`, `kpi_updates`, `blockers`), `ExtractionError(Exception)`, `LlmProvider` (Protocol với thuộc tính `name: str` và phương thức `extract(request: ExtractionRequest) -> ExtractionResult`), `validate_extraction_result(result: ExtractionResult, request: ExtractionRequest) -> None`
 
 - [ ] **Step 1: Viết test thất bại**
 
@@ -900,8 +901,9 @@ from app.llm.base import (
     ExtractionRequest,
     ExtractionResult,
     KpiCatalogItem,
+    KpiUpdateItem,
     TaskCatalogItem,
-    validate_result_against_catalog,
+    validate_extraction_result,
 )
 
 REQUEST = ExtractionRequest(
@@ -967,7 +969,7 @@ def test_unknown_kpi_id_is_rejected():
         }
     )
     with pytest.raises(ExtractionError) as excinfo:
-        validate_result_against_catalog(result, REQUEST)
+        validate_extraction_result(result, REQUEST)
     assert "999" in str(excinfo.value)
 
 
@@ -980,7 +982,7 @@ def test_unknown_task_id_is_rejected():
         }
     )
     with pytest.raises(ExtractionError):
-        validate_result_against_catalog(result, REQUEST)
+        validate_extraction_result(result, REQUEST)
 
 
 def test_unknown_related_kpi_id_in_blocker_is_rejected():
@@ -992,7 +994,7 @@ def test_unknown_related_kpi_id_in_blocker_is_rejected():
         }
     )
     with pytest.raises(ExtractionError):
-        validate_result_against_catalog(result, REQUEST)
+        validate_extraction_result(result, REQUEST)
 
 
 def test_known_ids_pass_validation():
@@ -1003,7 +1005,36 @@ def test_known_ids_pass_validation():
             "kpi_updates": [{"kpi_id": 7, "delta_value": 2, "evidence": "z"}],
         }
     )
-    validate_result_against_catalog(result, REQUEST)  # không ném lỗi
+    validate_extraction_result(result, REQUEST)  # không ném lỗi
+
+
+def test_gate_catches_infinite_delta_that_bypassed_pydantic():
+    """Provider dựng object bằng model_construct vẫn không lách được cổng."""
+    result = ExtractionResult.model_construct(
+        tasks_done=[],
+        blockers=[],
+        kpi_updates=[
+            KpiUpdateItem.model_construct(
+                kpi_id=7, delta_value=float("inf"), evidence="x"
+            )
+        ],
+    )
+    with pytest.raises(ExtractionError):
+        validate_extraction_result(result, REQUEST)
+
+
+def test_gate_catches_nan_delta_that_bypassed_pydantic():
+    result = ExtractionResult.model_construct(
+        tasks_done=[],
+        blockers=[],
+        kpi_updates=[
+            KpiUpdateItem.model_construct(
+                kpi_id=7, delta_value=float("nan"), evidence="x"
+            )
+        ],
+    )
+    with pytest.raises(ExtractionError):
+        validate_extraction_result(result, REQUEST)
 ```
 
 - [ ] **Step 2: Chạy test để xác nhận nó thất bại**
@@ -1021,6 +1052,7 @@ Expected: FAIL với `ModuleNotFoundError: No module named 'app.llm'`
 Module này không biết gì về SQLAlchemy: nhận Pydantic vào, trả Pydantic ra.
 """
 
+import math
 from typing import Protocol
 
 from pydantic import BaseModel, Field
@@ -1076,16 +1108,31 @@ class LlmProvider(Protocol):
     def extract(self, request: ExtractionRequest) -> ExtractionResult: ...
 
 
-def validate_result_against_catalog(
+def validate_extraction_result(
     result: ExtractionResult, request: ExtractionRequest
 ) -> None:
-    """Chặn mọi id không nằm trong catalog đã gửi cho LLM."""
+    """Cổng kiểm tra DUY NHẤT áp lên output của MỌI provider.
+
+    Gọi ở tầng service ngay sau `provider.extract(...)`, nên không provider nào
+    tự quyết định được ràng buộc nào áp cho mình. Kiểm tra hai bất biến:
+
+    1. Mọi id đều nằm trong catalog đã gửi cho LLM (hoặc là null).
+    2. Mọi `delta_value` đều là số hữu hạn.
+
+    Ràng buộc (2) trùng với `allow_inf_nan=False` trên `KpiUpdateItem`, và đó là
+    cố ý: Pydantic chỉ chặn lúc dựng object, còn cổng này chặn cả provider dựng
+    object bằng `model_construct` hoặc bằng bất kỳ đường nào bỏ qua validate.
+    """
     kpi_ids = {item.id for item in request.kpi_catalog}
     task_ids = {item.id for item in request.task_catalog}
 
     for update in result.kpi_updates:
         if update.kpi_id is not None and update.kpi_id not in kpi_ids:
             raise ExtractionError(f"kpi_id {update.kpi_id} không có trong catalog")
+        if not math.isfinite(update.delta_value):
+            raise ExtractionError(
+                f"delta_value không phải số hữu hạn: {update.delta_value}"
+            )
 
     for task in result.tasks_done:
         if task.task_id is not None and task.task_id not in task_ids:
@@ -1101,7 +1148,7 @@ def validate_result_against_catalog(
 - [ ] **Step 5: Chạy test để xác nhận nó pass**
 
 Run: `pytest tests/test_llm_base.py -v`
-Expected: PASS (8 test)
+Expected: PASS (10 test)
 
 - [ ] **Step 6: Commit**
 
@@ -1390,7 +1437,7 @@ def test_returns_parsed_output():
         blockers=[],
     )
     client = FakeClient(response=FakeResponse(parsed_output=expected))
-    provider = AnthropicProvider(api_key="k", model="claude-opus-5", client=client)
+    provider = AnthropicProvider(api_key="k", model="claude-sonnet-5", client=client)
 
     assert provider.extract(REQUEST) == expected
 
@@ -1398,18 +1445,18 @@ def test_returns_parsed_output():
 def test_sends_configured_model_and_output_format():
     expected = ExtractionResult(tasks_done=[], kpi_updates=[], blockers=[])
     client = FakeClient(response=FakeResponse(parsed_output=expected))
-    provider = AnthropicProvider(api_key="k", model="claude-opus-5", client=client)
+    provider = AnthropicProvider(api_key="k", model="claude-sonnet-5", client=client)
 
     provider.extract(REQUEST)
 
     kwargs = client.messages.last_kwargs
-    assert kwargs["model"] == "claude-opus-5"
+    assert kwargs["model"] == "claude-sonnet-5"
     assert kwargs["output_format"] is ExtractionResult
 
 
 def test_refusal_becomes_extraction_error():
     client = FakeClient(response=FakeResponse(parsed_output=None, stop_reason="refusal"))
-    provider = AnthropicProvider(api_key="k", model="claude-opus-5", client=client)
+    provider = AnthropicProvider(api_key="k", model="claude-sonnet-5", client=client)
 
     with pytest.raises(ExtractionError):
         provider.extract(REQUEST)
@@ -1417,7 +1464,7 @@ def test_refusal_becomes_extraction_error():
 
 def test_missing_parsed_output_becomes_extraction_error():
     client = FakeClient(response=FakeResponse(parsed_output=None))
-    provider = AnthropicProvider(api_key="k", model="claude-opus-5", client=client)
+    provider = AnthropicProvider(api_key="k", model="claude-sonnet-5", client=client)
 
     with pytest.raises(ExtractionError):
         provider.extract(REQUEST)
@@ -1425,7 +1472,7 @@ def test_missing_parsed_output_becomes_extraction_error():
 
 def test_sdk_error_becomes_extraction_error():
     client = FakeClient(error=RuntimeError("mang loi"))
-    provider = AnthropicProvider(api_key="k", model="claude-opus-5", client=client)
+    provider = AnthropicProvider(api_key="k", model="claude-sonnet-5", client=client)
 
     with pytest.raises(ExtractionError):
         provider.extract(REQUEST)
@@ -1741,13 +1788,61 @@ def test_provider_error_marks_report_failed_without_suggestions(db_session, seed
     assert report.blockers == []
 
 
-def test_id_outside_catalog_marks_report_failed(db_session, seeded):
+def test_kpi_id_outside_catalog_marks_report_failed(db_session, seeded):
+    """Provider trả kpi_id không có trong catalog -> bao cao failed, khong suggestion."""
     provider = ScriptedProvider(
         result=ExtractionResult(
             tasks_done=[],
             blockers=[],
             kpi_updates=[
                 KpiUpdateItem(kpi_id=99999, delta_value=1.0, evidence="ngoai catalog")
+            ],
+        )
+    )
+    report = submit_report(
+        db_session,
+        employee_id=seeded["employee"].id,
+        week_start=WEEK,
+        raw_text="bat ky",
+        provider=provider,
+    )
+
+    assert report.extraction_status is ExtractionStatus.FAILED
+    assert "99999" in report.extraction_error
+    assert report.kpi_suggestions == []
+    assert report.blockers == []
+
+
+def test_task_id_outside_catalog_marks_report_failed(db_session, seeded):
+    provider = ScriptedProvider(
+        result=ExtractionResult(
+            tasks_done=[TaskDoneItem(task_id=99999, description="ngoai catalog")],
+            blockers=[],
+            kpi_updates=[],
+        )
+    )
+    report = submit_report(
+        db_session,
+        employee_id=seeded["employee"].id,
+        week_start=WEEK,
+        raw_text="bat ky",
+        provider=provider,
+    )
+
+    assert report.extraction_status is ExtractionStatus.FAILED
+    assert report.task_suggestions == []
+
+
+def test_non_finite_delta_marks_report_failed(db_session, seeded):
+    """Provider lach Pydantic bang model_construct van bi cong service chan lai."""
+    provider = ScriptedProvider(
+        result=ExtractionResult.model_construct(
+            tasks_done=[],
+            blockers=[],
+            kpi_updates=[
+                KpiUpdateItem.model_construct(
+                    kpi_id=seeded["kpi"].id, delta_value=float("inf"), evidence="x"
+                )
             ],
         )
     )
@@ -1853,6 +1948,7 @@ class NotFoundError(Exception):
 ```python
 from datetime import date
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -1863,7 +1959,7 @@ from app.llm.base import (
     KpiCatalogItem,
     LlmProvider,
     TaskCatalogItem,
-    validate_result_against_catalog,
+    validate_extraction_result,
 )
 from app.models import (
     Blocker,
@@ -1901,14 +1997,20 @@ def build_extraction_request(db: Session, report: WeeklyReport) -> ExtractionReq
 def run_extraction(
     db: Session, report: WeeklyReport, provider: LlmProvider
 ) -> WeeklyReport:
-    """Gọi provider và ghi kết quả. Thất bại → failed, không tạo suggestion nào."""
+    """Gọi provider và ghi kết quả. Thất bại → failed, không tạo suggestion nào.
+
+    `validate_extraction_result` được gọi ở đây, sau MỌI provider, nên không
+    provider nào tự miễn trừ được ràng buộc catalog và delta hữu hạn.
+    `ValidationError` cũng được bắt: một provider ném lỗi Pydantic thì báo cáo
+    phải thành `failed`, chứ không được làm sập request.
+    """
     request = build_extraction_request(db, report)
     report.provider_name = provider.name
 
     try:
         result = provider.extract(request)
-        validate_result_against_catalog(result, request)
-    except ExtractionError as exc:
+        validate_extraction_result(result, request)
+    except (ExtractionError, ValidationError) as exc:
         report.extraction_status = ExtractionStatus.FAILED
         report.extraction_error = str(exc)
         db.commit()
@@ -1978,7 +2080,7 @@ def submit_report(
 - [ ] **Step 6: Chạy test để xác nhận nó pass**
 
 Run: `pytest tests/test_service_extraction.py -v`
-Expected: PASS (9 test)
+Expected: PASS (11 test)
 
 - [ ] **Step 7: Commit**
 
@@ -4150,7 +4252,7 @@ LLM_PROVIDER=anthropic
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Mặc định là `mock`. Model mặc định là `claude-opus-5`.
+Mặc định là `mock`. Model mặc định là `claude-sonnet-5`.
 
 ## Thiết kế
 

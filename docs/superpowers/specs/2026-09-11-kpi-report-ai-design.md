@@ -262,7 +262,7 @@ Mọi trường hợp trượt đều dẫn tới `extraction_status = failed` n
 - **MockProvider** — mặc định, không dùng mạng. Khớp từ khoá tên KPI/Task trong
   catalog và bắt số bằng regex; đủ thật để test trọn vòng có ý nghĩa. Nhận được
   kịch bản đóng sẵn khi unit test cần một kết quả cụ thể (kể cả kết quả hỏng).
-- **AnthropicProvider** — SDK `anthropic`, model `claude-opus-5`, ép JSON đúng
+- **AnthropicProvider** — SDK `anthropic`, model `claude-sonnet-5`, ép JSON đúng
   schema bằng **structured outputs**: `client.messages.parse(...,
   output_format=ExtractionResult)` trả về `response.parsed_output` đã là một
   `ExtractionResult` hợp lệ. Đọc `ANTHROPIC_API_KEY` từ `.env`.
