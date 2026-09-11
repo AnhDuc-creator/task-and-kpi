@@ -45,8 +45,28 @@ export default function ReviewPage() {
     setKpiDrafts((drafts) => ({ ...drafts, [id]: { ...current, ...patch } }))
   }
 
-  /** Mọi thao tác duyệt/từ chối đi qua đây: cùng một cách xử lý lỗi và reload. */
-  async function run(action: () => Promise<unknown>) {
+  /** Xoá nháp của riêng một dòng KPI, không đụng tới nháp của các dòng khác. */
+  function clearKpiDraft(id: number) {
+    setKpiDrafts((drafts) => {
+      const { [id]: _removed, ...rest } = drafts
+      return rest
+    })
+  }
+
+  /** Xoá nháp của riêng một dòng công việc, không đụng tới nháp của các dòng khác. */
+  function clearTaskDraft(id: number) {
+    setTaskDrafts((drafts) => {
+      const { [id]: _removed, ...rest } = drafts
+      return rest
+    })
+  }
+
+  /**
+   * Mọi thao tác duyệt/từ chối đi qua đây: cùng một cách xử lý lỗi và reload.
+   * `clearDraft` chỉ xoá nháp của dòng vừa thao tác, để không mất nội dung
+   * người dùng đang gõ dở ở các dòng khác.
+   */
+  async function run(action: () => Promise<unknown>, clearDraft: () => void) {
     setActionError(null)
     setBusy(true)
     try {
@@ -56,8 +76,7 @@ export default function ReviewPage() {
       setActionError(caught)
     } finally {
       setBusy(false)
-      setKpiDrafts({})
-      setTaskDrafts({})
+      clearDraft()
       queue.reload()
       tasks.reload()
     }
@@ -142,14 +161,23 @@ export default function ReviewPage() {
                         type="button"
                         data-testid="kpi-row-approve"
                         // final_kpi_id bắt buộc khác null, nên chưa chọn KPI thì chưa duyệt được.
-                        disabled={busy || draft.kpiId === '' || draft.delta.trim() === ''}
+                        // Delta cũng phải là số hữu hạn: "-", "." hay "1e" đi qua Number() thành
+                        // NaN, JSON.stringify biến NaN thành null, khiến backend trả 422 khó hiểu.
+                        disabled={
+                          busy ||
+                          draft.kpiId === '' ||
+                          draft.delta.trim() === '' ||
+                          !Number.isFinite(Number(draft.delta))
+                        }
                         onClick={() =>
-                          run(() =>
-                            approveKpiSuggestion(row.id, {
-                              final_kpi_id: Number(draft.kpiId),
-                              final_delta: Number(draft.delta),
-                              note: draft.note.trim() === '' ? null : draft.note.trim(),
-                            }),
+                          run(
+                            () =>
+                              approveKpiSuggestion(row.id, {
+                                final_kpi_id: Number(draft.kpiId),
+                                final_delta: Number(draft.delta),
+                                note: draft.note.trim() === '' ? null : draft.note.trim(),
+                              }),
+                            () => clearKpiDraft(row.id),
                           )
                         }
                       >
@@ -160,7 +188,7 @@ export default function ReviewPage() {
                         className="secondary"
                         data-testid="kpi-row-reject"
                         disabled={busy}
-                        onClick={() => run(() => rejectKpiSuggestion(row.id))}
+                        onClick={() => run(() => rejectKpiSuggestion(row.id), () => clearKpiDraft(row.id))}
                       >
                         Từ chối
                       </button>
@@ -218,7 +246,12 @@ export default function ReviewPage() {
                         type="button"
                         data-testid="task-row-approve"
                         disabled={busy || selected === ''}
-                        onClick={() => run(() => approveTaskSuggestion(row.id, Number(selected)))}
+                        onClick={() =>
+                          run(
+                            () => approveTaskSuggestion(row.id, Number(selected)),
+                            () => clearTaskDraft(row.id),
+                          )
+                        }
                       >
                         Duyệt
                       </button>
@@ -227,7 +260,7 @@ export default function ReviewPage() {
                         className="secondary"
                         data-testid="task-row-reject"
                         disabled={busy}
-                        onClick={() => run(() => rejectTaskSuggestion(row.id))}
+                        onClick={() => run(() => rejectTaskSuggestion(row.id), () => clearTaskDraft(row.id))}
                       >
                         Từ chối
                       </button>
