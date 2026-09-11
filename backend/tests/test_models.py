@@ -102,6 +102,49 @@ def test_same_week_different_employee_is_allowed(db_session):
     assert db_session.query(WeeklyReport).count() == 2
 
 
+def test_enum_columns_store_lowercase_values(db_session):
+    """DB phải chứa `todo`/`pending`, không phải tên hằng `TODO`/`PENDING`.
+
+    Mặc định SQLAlchemy lưu tên hằng; spec quy định từ vựng chữ thường. Test
+    đọc thẳng bằng SQL thô để không bị ORM dịch ngược che mất.
+    """
+    from sqlalchemy import text
+
+    employee = Employee(name="G", email="g@example.com")
+    db_session.add(employee)
+    db_session.flush()
+    kpi = Kpi(
+        name="Doanh thu",
+        target_value=10.0,
+        unit="trieu",
+        owner_id=employee.id,
+        period_start=date(2026, 1, 1),
+        period_end=date(2026, 12, 31),
+    )
+    db_session.add(kpi)
+    db_session.flush()
+    db_session.add(
+        Task(
+            title="Viec A",
+            kpi_id=kpi.id,
+            assignee_id=employee.id,
+            status=TaskStatus.TODO,
+        )
+    )
+    db_session.add(
+        WeeklyReport(
+            employee_id=employee.id, week_start=date(2026, 3, 2), raw_text="x"
+        )
+    )
+    db_session.commit()
+
+    assert db_session.execute(text("SELECT status FROM tasks")).scalar() == "todo"
+    assert (
+        db_session.execute(text("SELECT extraction_status FROM weekly_reports")).scalar()
+        == "pending"
+    )
+
+
 def test_progress_entries_accumulate(db_session):
     employee = Employee(name="F", email="f@example.com")
     db_session.add(employee)

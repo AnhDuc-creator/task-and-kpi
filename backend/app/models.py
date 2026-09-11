@@ -24,6 +24,19 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _enum_column(enum_cls: type[enum.Enum]) -> Enum:
+    """Cột enum lưu GIÁ TRỊ chữ thường (`todo`), không lưu tên hằng (`TODO`).
+
+    Mặc định SQLAlchemy lưu tên hằng, khiến dữ liệu trong DB lệch với từ vựng
+    mà spec quy định và làm SQL thô / seed data không đọc lại được qua ORM.
+    """
+    return Enum(
+        enum_cls,
+        native_enum=False,
+        values_callable=lambda cls: [member.value for member in cls],
+    )
+
+
 class TaskStatus(str, enum.Enum):
     TODO = "todo"
     DOING = "doing"
@@ -77,7 +90,7 @@ class Task(Base):
     kpi_id: Mapped[int] = mapped_column(ForeignKey("kpis.id"))
     assignee_id: Mapped[int] = mapped_column(ForeignKey("employees.id"))
     status: Mapped[TaskStatus] = mapped_column(
-        Enum(TaskStatus, native_enum=False), default=TaskStatus.TODO
+        _enum_column(TaskStatus), default=TaskStatus.TODO
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
@@ -98,7 +111,7 @@ class WeeklyReport(Base):
     raw_text: Mapped[str] = mapped_column(Text)
     submitted_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     extraction_status: Mapped[ExtractionStatus] = mapped_column(
-        Enum(ExtractionStatus, native_enum=False), default=ExtractionStatus.PENDING
+        _enum_column(ExtractionStatus), default=ExtractionStatus.PENDING
     )
     extraction_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider_name: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -127,7 +140,7 @@ class KpiUpdateSuggestion(Base):
     suggested_delta: Mapped[float] = mapped_column(Float)
     evidence: Mapped[str] = mapped_column(Text)
     status: Mapped[SuggestionStatus] = mapped_column(
-        Enum(SuggestionStatus, native_enum=False), default=SuggestionStatus.PENDING
+        _enum_column(SuggestionStatus), default=SuggestionStatus.PENDING
     )
     final_kpi_id: Mapped[int | None] = mapped_column(
         ForeignKey("kpis.id"), nullable=True
@@ -150,7 +163,7 @@ class TaskCompletionSuggestion(Base):
     )
     raw_text: Mapped[str] = mapped_column(Text)
     status: Mapped[SuggestionStatus] = mapped_column(
-        Enum(SuggestionStatus, native_enum=False), default=SuggestionStatus.PENDING
+        _enum_column(SuggestionStatus), default=SuggestionStatus.PENDING
     )
     final_task_id: Mapped[int | None] = mapped_column(
         ForeignKey("tasks.id"), nullable=True
