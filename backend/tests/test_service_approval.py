@@ -12,6 +12,7 @@ from app.models import (
     Task,
     TaskStatus,
 )
+from app.services import approval
 from app.services.approval import (
     approve_kpi_suggestion,
     approve_task_suggestion,
@@ -244,3 +245,38 @@ def test_double_task_approval_raises_conflict(db_session, report):
             suggestion_id=suggestion.id,
             final_task_id=suggestion.suggested_task_id,
         )
+
+
+def test_failure_mid_task_approval_rolls_back_everything(
+    db_session, report, monkeypatch
+):
+    """Duyệt task cũng phải nguyên tử, đúng như duyệt KPI.
+
+    Cho hỏng ở lần gọi `_utcnow()` THỨ HAI: lúc đó suggestion đã được đánh
+    `approved` và task đã bị đặt `done` trong session. Nếu hai thay đổi này
+    không nằm chung một giao dịch, một trong hai sẽ sống sót sau rollback.
+    """
+    suggestion = report.task_suggestions[0]
+    task_id = suggestion.suggested_task_id
+    real_utcnow = approval._utcnow
+    calls = {"count": 0}
+
+    def explode_on_second_call():
+        calls["count"] += 1
+        if calls["count"] >= 2:
+            raise RuntimeError("o dia loi")
+        return real_utcnow()
+
+    monkeypatch.setattr("app.services.approval._utcnow", explode_on_second_call)
+
+    with pytest.raises(RuntimeError):
+        approve_task_suggestion(
+            db_session, suggestion_id=suggestion.id, final_task_id=task_id
+        )
+
+    db_session.expire_all()
+    assert suggestion.status is SuggestionStatus.PENDING
+    assert suggestion.final_task_id is None
+    task = db_session.get(Task, task_id)
+    assert task.status is TaskStatus.TODO
+    assert task.completed_at is None
