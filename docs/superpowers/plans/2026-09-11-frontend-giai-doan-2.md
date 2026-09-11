@@ -1419,9 +1419,9 @@ export default function SetupPage() {
     }
   }
 
-  const employeeName4 = (id: number) =>
+  const employeeNameById = (id: number) =>
     employeeList.find((item) => item.id === id)?.name ?? `#${id}`
-  const kpiName4 = (id: number) => kpiList.find((item) => item.id === id)?.name ?? `#${id}`
+  const kpiNameById = (id: number) => kpiList.find((item) => item.id === id)?.name ?? `#${id}`
 
   return (
     <div>
@@ -1573,7 +1573,7 @@ export default function SetupPage() {
                 <td>
                   {formatNumber(kpi.target_value)} {kpi.unit}
                 </td>
-                <td>{employeeName4(kpi.owner_id)}</td>
+                <td>{employeeNameById(kpi.owner_id)}</td>
                 <td>
                   {kpi.period_start} → {kpi.period_end}
                 </td>
@@ -1667,8 +1667,8 @@ export default function SetupPage() {
               <tr key={task.id} data-testid="task-row">
                 <td>{task.id}</td>
                 <td>{task.title}</td>
-                <td>{kpiName4(task.kpi_id)}</td>
-                <td>{employeeName4(task.assignee_id)}</td>
+                <td>{kpiNameById(task.kpi_id)}</td>
+                <td>{employeeNameById(task.assignee_id)}</td>
                 <td>
                   <select
                     value={task.status}
@@ -2532,6 +2532,7 @@ không dùng `127.0.0.1` — backend chỉ mở CORS cho đúng origin đó.
 from __future__ import annotations
 
 import datetime as dt
+import pathlib
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -2649,7 +2650,11 @@ def main() -> None:
             expect(page.get_by_test_id("dashboard-blocker")).to_have_count(1)
             print("OK  Dashboard sau khi duyet: 100%, 100/100, Hoan thanh, canh bao da tat")
 
-            page.screenshot(path="tests/e2e/dashboard-sau-khi-duyet.png", full_page=True)
+            # Đường dẫn tuyệt đối: script chạy với CWD là gốc repo, nhưng đừng
+            # phụ thuộc vào đó. Ảnh nằm trong thư mục đã được .gitignore bỏ qua.
+            shot_dir = pathlib.Path(__file__).resolve().parent / "screenshots"
+            shot_dir.mkdir(exist_ok=True)
+            page.screenshot(path=str(shot_dir / "dashboard-sau-khi-duyet.png"), full_page=True)
             print("\nTRON VONG THANH CONG")
         finally:
             browser.close()
@@ -2659,7 +2664,17 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 4: Chạy e2e lần thứ nhất**
+- [ ] **Step 4: Bỏ qua ảnh chụp màn hình trong git**
+
+Thêm một dòng vào `.gitignore` ở gốc repo (giữ nguyên các dòng đã có):
+
+```
+tests/e2e/screenshots/
+```
+
+Ảnh chụp là tạo phẩm của mỗi lần chạy, không phải mã nguồn.
+
+- [ ] **Step 5: Chạy e2e lần thứ nhất**
 
 Chạy từ thư mục gốc của **worktree**:
 
@@ -2672,7 +2687,7 @@ Kỳ vọng: in ra lần lượt năm dòng `OK ...` rồi `TRON VONG THANH CONG
 Nếu thất bại, **dừng lại và dùng skill `superpowers:systematic-debugging`** trước
 khi sửa bất cứ thứ gì. Không được sửa `backend/` để làm test qua.
 
-- [ ] **Step 5: Chạy e2e lần thứ hai ngay sau đó — đây là phép thử thật sự**
+- [ ] **Step 6: Chạy e2e lần thứ hai ngay sau đó — đây là phép thử thật sự**
 
 ```powershell
 D:\projects\task-and-kpi\.venv\Scripts\python.exe tests\e2e\run_e2e.py
@@ -2683,7 +2698,7 @@ không chứng minh được: DB tạm được tạo mới thật, và cổng 8
 phóng thật sau lần trước. Nếu lần hai chết ở "Server failed to start", nghĩa là
 `free_ports()` chưa đủ — sửa `run_e2e.py`, không sửa `with_server.py`.
 
-- [ ] **Step 6: Viết `frontend/README.md`**
+- [ ] **Step 7: Viết `frontend/README.md`**
 
 ```markdown
 # Frontend — báo cáo tuần & KPI
@@ -2730,7 +2745,7 @@ SQLite tạm nên chạy lại được bao nhiêu lần cũng được):
 ```
 ```
 
-- [ ] **Step 7: Cập nhật `README.md` ở gốc repo**
+- [ ] **Step 8: Cập nhật `README.md` ở gốc repo**
 
 Thêm mục frontend vào README gốc, giữ nguyên phần backend đã có. Đọc file hiện
 tại trước, rồi chèn một mục mới:
@@ -2754,7 +2769,7 @@ npm run dev     # http://localhost:5173
 ```
 ```
 
-- [ ] **Step 8: Xác minh lần cuối toàn bộ**
+- [ ] **Step 9: Xác minh lần cuối toàn bộ**
 
 Chạy từ `frontend/`: `npm test && npx tsc --noEmit && npm run build`
 Kỳ vọng: PASS / không lỗi / build thành công.
@@ -2766,10 +2781,10 @@ backend không bị đụng vào.
 Chạy: `git status --short`
 Kỳ vọng: không có file `.db`, `node_modules/`, hay `dist/` bị theo dõi.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add tests/e2e frontend/README.md README.md
+git add tests/e2e frontend/README.md README.md .gitignore
 git commit -m "test(e2e): kich ban tron vong bang Playwright, chay lai duoc"
 ```
 
