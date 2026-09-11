@@ -262,8 +262,12 @@ Mọi trường hợp trượt đều dẫn tới `extraction_status = failed` n
 - **MockProvider** — mặc định, không dùng mạng. Khớp từ khoá tên KPI/Task trong
   catalog và bắt số bằng regex; đủ thật để test trọn vòng có ý nghĩa. Nhận được
   kịch bản đóng sẵn khi unit test cần một kết quả cụ thể (kể cả kết quả hỏng).
-- **AnthropicProvider** — SDK `anthropic`, model Claude, ép JSON đúng schema bằng
-  tool-use. Đọc `ANTHROPIC_API_KEY` từ `.env`.
+- **AnthropicProvider** — SDK `anthropic`, model `claude-opus-5`, ép JSON đúng
+  schema bằng **structured outputs**: `client.messages.parse(...,
+  output_format=ExtractionResult)` trả về `response.parsed_output` đã là một
+  `ExtractionResult` hợp lệ. Đọc `ANTHROPIC_API_KEY` từ `.env`.
+  `stop_reason == "refusal"` được coi là lỗi trích xuất (→ `failed`), giống mọi
+  lỗi provider khác.
 
 Chọn qua `LLM_PROVIDER=mock|anthropic` trong `.env`, mặc định `mock`. Test không
 bao giờ chạm provider thật.
