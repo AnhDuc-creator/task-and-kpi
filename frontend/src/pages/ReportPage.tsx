@@ -41,6 +41,8 @@ export default function ReportPage() {
     id === null ? 'chưa gán' : (kpis.data ?? []).find((k) => k.id === id)?.name ?? `#${id}`
   const taskTitle = (id: number | null) =>
     id === null ? 'chưa gán' : (tasks.data ?? []).find((t) => t.id === id)?.title ?? `#${id}`
+  const employeeName = (id: number) =>
+    (employees.data ?? []).find((employee) => employee.id === id)?.name ?? `#${id}`
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -78,7 +80,7 @@ export default function ReportPage() {
   return (
     <div>
       <h1>Nộp báo cáo tuần</h1>
-      <ErrorBox error={employees.error ?? reports.error} />
+      <ErrorBox error={employees.error ?? kpis.error ?? tasks.error ?? reports.error} />
 
       <section className="card">
         <form onSubmit={submit}>
@@ -203,6 +205,7 @@ export default function ReportPage() {
           <thead>
             <tr>
               <th>ID</th>
+              <th>Nhân viên</th>
               <th>Tuần</th>
               <th>Trạng thái</th>
               <th></th>
@@ -212,6 +215,7 @@ export default function ReportPage() {
             {(reports.data ?? []).slice(0, 10).map((report) => (
               <tr key={report.id}>
                 <td>{report.id}</td>
+                <td>{employeeName(report.employee_id)}</td>
                 <td>{report.week_start}</td>
                 <td>
                   <ExtractionStatusBadge status={report.extraction_status} />

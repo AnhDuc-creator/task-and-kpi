@@ -71,12 +71,15 @@ export default function ReviewPage() {
     setBusy(true)
     try {
       await action()
+      // Chỉ xoá nháp khi thao tác thành công. Nếu request lỗi (mất mạng, backend
+      // restart...), nháp phải còn nguyên — nếu không, dòng vẫn "pending" sẽ hiện lại
+      // giá trị gợi ý ban đầu của AI, và lần bấm Duyệt kế tiếp sẽ ghi nhầm giá trị đó.
+      clearDraft()
     } catch (caught) {
       // 409 nghĩa là ai đó đã xử lý dòng này trước. Vẫn reload để hàng đợi khớp thực tế.
       setActionError(caught)
     } finally {
       setBusy(false)
-      clearDraft()
       queue.reload()
       tasks.reload()
     }
@@ -87,7 +90,7 @@ export default function ReviewPage() {
   return (
     <div>
       <h1>Hàng đợi duyệt</h1>
-      <ErrorBox error={queue.error} />
+      <ErrorBox error={queue.error ?? kpis.error ?? tasks.error} />
       <ErrorBox error={actionError} />
 
       {!queue.loading && isEmpty && (

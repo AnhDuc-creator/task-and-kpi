@@ -49,10 +49,55 @@ def pids_listening_on(port: int) -> set[str]:
     return pids
 
 
+def command_line_of(pid: str) -> str | None:
+    """Command line đầy đủ của PID, hoặc None nếu không xác định được (chỉ Windows)."""
+    if sys.platform != "win32":
+        return None
+    try:
+        result = subprocess.run(
+            [
+                "powershell", "-NoProfile", "-NonInteractive", "-Command",
+                f"(Get-CimInstance Win32_Process -Filter 'ProcessId={pid}').CommandLine",
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    output = result.stdout.strip()
+    return output or None
+
+
+def is_our_server(command_line: str) -> bool:
+    """True nếu command line trông giống uvicorn hoặc Vite dev server do script này khởi động."""
+    lowered = command_line.lower()
+    if "uvicorn" in lowered and "app.main:app" in lowered:
+        return True
+    return "vite" in lowered or "npm" in lowered
+
+
 def free_ports() -> None:
+    """Giải phóng cổng 8000/5173, nhưng CHỈ kill tiến trình đúng là server của script này.
+
+    Cổng 8000 là cổng mặc định rất phổ biến — nếu người dùng đang chạy
+    `uvicorn --reload` thủ công ở cửa sổ khác, không được âm thầm kill nó.
+    Nếu không xác định được, hoặc command line không khớp uvicorn/Vite của
+    chúng ta, thì coi như "không phải của mình": cảnh báo và dừng lại, để
+    người dùng tự giải phóng cổng thay vì kill nhầm.
+    """
     for port in PORTS:
         for pid in pids_listening_on(port):
-            print(f"Giải phóng cổng {port}: taskkill PID {pid}")
+            command_line = command_line_of(pid)
+            if command_line is None or not is_our_server(command_line):
+                print(
+                    f"CẢNH BÁO: cổng {port} đang bị tiến trình PID {pid} giữ, "
+                    "và tiến trình này không giống server do kịch bản e2e này khởi động "
+                    f"(command line: {command_line!r}). Sẽ KHÔNG tự ý kill. "
+                    f"Vui lòng tự giải phóng cổng {port} (đóng tiến trình đó) rồi chạy lại."
+                )
+                sys.exit(1)
+            print(f"Giải phóng cổng {port}: taskkill PID {pid} ({command_line})")
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", pid], capture_output=True
             )
