@@ -77,14 +77,22 @@ def is_our_server(command_line: str) -> bool:
     return "vite" in lowered or "npm" in lowered
 
 
-def free_ports() -> None:
+def free_ports(*, fatal_on_foreign: bool) -> None:
     """Giải phóng cổng 8000/5173, nhưng CHỈ kill tiến trình đúng là server của script này.
 
     Cổng 8000 là cổng mặc định rất phổ biến — nếu người dùng đang chạy
     `uvicorn --reload` thủ công ở cửa sổ khác, không được âm thầm kill nó.
     Nếu không xác định được, hoặc command line không khớp uvicorn/Vite của
-    chúng ta, thì coi như "không phải của mình": cảnh báo và dừng lại, để
-    người dùng tự giải phóng cổng thay vì kill nhầm.
+    chúng ta, thì coi như "không phải của mình" và không bao giờ kill.
+
+    `fatal_on_foreign` quyết định phản ứng khi gặp tiến trình lạ:
+
+    - `True` (dọn TRƯỚC khi chạy): dừng hẳn với mã 1, vì cổng bị chiếm thì
+      `with_server.py` cũng sẽ chết ngay sau đó với một thông điệp khó hiểu hơn.
+    - `False` (dọn SAU khi chạy, trong `finally`): chỉ cảnh báo. Một tiến trình
+      lạ chiếm cổng giữa chừng là chuyện đáng nói, nhưng không phải lý do để
+      biến một lần chạy đã PASS thành FAIL — bước dọn dẹp không được phép
+      ghi đè mã thoát của chính kịch bản e2e.
     """
     for port in PORTS:
         for pid in pids_listening_on(port):
@@ -93,10 +101,17 @@ def free_ports() -> None:
                 print(
                     f"CẢNH BÁO: cổng {port} đang bị tiến trình PID {pid} giữ, "
                     "và tiến trình này không giống server do kịch bản e2e này khởi động "
-                    f"(command line: {command_line!r}). Sẽ KHÔNG tự ý kill. "
-                    f"Vui lòng tự giải phóng cổng {port} (đóng tiến trình đó) rồi chạy lại."
+                    f"(command line: {command_line!r}). Sẽ KHÔNG tự ý kill."
                 )
-                sys.exit(1)
+                if fatal_on_foreign:
+                    print(
+                        f"Vui lòng tự giải phóng cổng {port} (đóng tiến trình đó) rồi chạy lại."
+                    )
+                    sys.exit(1)
+                print(
+                    f"Bỏ qua việc dọn cổng {port}; kết quả của lần chạy vừa rồi giữ nguyên."
+                )
+                continue
             print(f"Giải phóng cổng {port}: taskkill PID {pid} ({command_line})")
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", pid], capture_output=True
@@ -104,7 +119,8 @@ def free_ports() -> None:
 
 
 def main() -> int:
-    free_ports()
+    # Trước khi chạy: cổng bị tiến trình lạ chiếm là lỗi chặn, dừng ngay.
+    free_ports(fatal_on_foreign=True)
 
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     DB_PATH.unlink(missing_ok=True)
@@ -133,7 +149,9 @@ def main() -> int:
     try:
         return subprocess.run(command, env=env).returncode
     finally:
-        free_ports()
+        # Sau khi chạy: chỉ dọn rác của chính mình. Không được `sys.exit` ở đây,
+        # vì `SystemExit` ném ra từ `finally` sẽ ghi đè mã thoát mà `try` vừa trả về.
+        free_ports(fatal_on_foreign=False)
 
 
 if __name__ == "__main__":

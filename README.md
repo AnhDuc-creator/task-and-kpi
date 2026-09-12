@@ -36,11 +36,11 @@ npm run dev     # http://localhost:5173
 
 ## Kiểm thử trọn vòng
 
-Kịch bản e2e dùng Playwright, chưa được khai báo trong file phụ thuộc nào —
-cài một lần trước khi chạy (venv ở gốc repo):
+Kịch bản e2e dùng Playwright. Gói Python đã nằm trong dev-extras nên
+`pip install -e ".\backend[dev]"` ở trên đã cài sẵn; chỉ còn phải tải trình
+duyệt một lần:
 
 ```powershell
-.venv\Scripts\python.exe -m pip install playwright
 .venv\Scripts\python.exe -m playwright install chromium
 ```
 
@@ -53,4 +53,6 @@ chạy, nhưng chỉ kill tiến trình mà nó nhận ra là server của chín
 (uvicorn / Vite dev server). Nếu cổng đang bị một tiến trình khác giữ (ví
 dụ bạn đang tự chạy `uvicorn --reload` ở cửa sổ khác), script sẽ **từ chối
 chạy** và in cảnh báo tên cổng + PID — hãy tự giải phóng cổng đó rồi chạy
-lại, thay vì để script kill nhầm tiến trình của bạn.
+lại, thay vì để script kill nhầm tiến trình của bạn. Sau khi chạy xong,
+nếu gặp tiến trình lạ thì script chỉ cảnh báo chứ không đổi kết quả của
+lần chạy vừa rồi.
