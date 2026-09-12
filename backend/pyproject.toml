@@ -15,6 +15,10 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "httpx>=0.27",
+    # Chỉ dùng cho kịch bản e2e ở tests/e2e/. Bộ test pytest của backend không
+    # chạm tới Playwright và vẫn chạy được khi chưa cài trình duyệt.
+    # Cài trình duyệt bằng một lệnh riêng: `python -m playwright install chromium`.
+    "playwright>=1.47",
 ]
 
 [build-system]
