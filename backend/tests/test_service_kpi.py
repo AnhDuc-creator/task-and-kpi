@@ -77,3 +77,18 @@ def test_list_kpis_is_ordered_by_id(db_session):
         first.id,
         second.id,
     ]
+
+
+def test_update_kpi_rejects_unknown_field_and_keeps_stored_row(db_session):
+    """Key lạ (vd. owner_id, id) là lỗi lập trình của nơi gọi, không phải
+    payload người dùng — router chỉ bao giờ gửi các trường KpiUpdate cho phép,
+    nên guard này chỉ có thể bị chạm bởi service/test gọi trực tiếp."""
+    owner = make_owner(db_session)
+    kpi = make_kpi(db_session, owner.id)
+
+    with pytest.raises(ValueError):
+        kpi_service.update_kpi(db_session, kpi.id, {"owner_id": 999999})
+
+    stored = kpi_service.get_kpi(db_session, kpi.id)
+    assert stored.owner_id == owner.id
+    assert stored.target_value == 100.0

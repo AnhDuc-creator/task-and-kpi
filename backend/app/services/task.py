@@ -2,13 +2,23 @@
 giao dịch nằm ở đây.
 """
 
-from typing import Any
+from typing import TypedDict
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.errors import NotFoundError
-from app.models import Employee, Kpi, Task
+from app.models import Employee, Kpi, Task, TaskStatus
+
+
+class TaskChanges(TypedDict, total=False):
+    """Các trường được phép sửa qua update_task — khớp 1-1 với TaskUpdate
+    trong app/schemas.py. Chỉ để tài liệu hoá: dự án không chạy mypy nên
+    TypedDict không tự chặn được key lạ, xem whitelist runtime bên dưới.
+    """
+
+    title: str
+    status: TaskStatus
 
 
 def _load_task(db: Session, task_id: int) -> Task:
@@ -40,8 +50,17 @@ def create_task(db: Session, *, title: str, kpi_id: int, assignee_id: int) -> Ta
     return task
 
 
-def update_task(db: Session, task_id: int, changes: dict[str, Any]) -> Task:
+def update_task(db: Session, task_id: int, changes: TaskChanges) -> Task:
     task = _load_task(db, task_id)
+
+    # Key lạ là lỗi lập trình của nơi gọi (router/test), không phải dữ liệu
+    # người dùng nhập sai, nên ném ValueError chứ không phải lỗi nghiệp vụ
+    # trong app.errors — nó không được phép lọt ra thành một mã HTTP 4xx.
+    unknown = set(changes) - TaskChanges.__optional_keys__
+    if unknown:
+        raise ValueError(
+            f"update_task nhận trường không được phép: {sorted(unknown)}"
+        )
 
     for field, value in changes.items():
         setattr(task, field, value)

@@ -85,3 +85,20 @@ def test_list_tasks_is_ordered_by_id(db_session):
         first.id,
         second.id,
     ]
+
+
+def test_update_task_rejects_unknown_field_and_keeps_stored_row(db_session):
+    """Key lạ (vd. kpi_id, id) là lỗi lập trình của nơi gọi, không phải
+    payload người dùng — router chỉ bao giờ gửi các trường TaskUpdate cho
+    phép, nên guard này chỉ có thể bị chạm bởi service/test gọi trực tiếp."""
+    owner, kpi = make_fixtures(db_session)
+    task = task_service.create_task(
+        db_session, title="Viec A", kpi_id=kpi.id, assignee_id=owner.id
+    )
+
+    with pytest.raises(ValueError):
+        task_service.update_task(db_session, task.id, {"kpi_id": 999999})
+
+    stored = task_service.list_tasks(db_session)[0]
+    assert stored.kpi_id == kpi.id
+    assert stored.title == "Viec A"

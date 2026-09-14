@@ -3,13 +3,26 @@ giao dịch nằm ở đây.
 """
 
 from datetime import date
-from typing import Any
+from typing import TypedDict
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.errors import InvalidInputError, NotFoundError
 from app.models import Employee, Kpi
+
+
+class KpiChanges(TypedDict, total=False):
+    """Các trường được phép sửa qua update_kpi — khớp 1-1 với KpiUpdate
+    trong app/schemas.py. Chỉ để tài liệu hoá: dự án không chạy mypy nên
+    TypedDict không tự chặn được key lạ, xem whitelist runtime bên dưới.
+    """
+
+    name: str
+    target_value: float
+    unit: str
+    period_start: date
+    period_end: date
 
 
 def list_kpis(db: Session) -> list[Kpi]:
@@ -55,8 +68,17 @@ def create_kpi(
     return kpi
 
 
-def update_kpi(db: Session, kpi_id: int, changes: dict[str, Any]) -> Kpi:
+def update_kpi(db: Session, kpi_id: int, changes: KpiChanges) -> Kpi:
     kpi = get_kpi(db, kpi_id)
+
+    # Key lạ là lỗi lập trình của nơi gọi (router/test), không phải dữ liệu
+    # người dùng nhập sai, nên ném ValueError chứ không phải lỗi nghiệp vụ
+    # trong app.errors — nó không được phép lọt ra thành một mã HTTP 4xx.
+    unknown = set(changes) - KpiChanges.__optional_keys__
+    if unknown:
+        raise ValueError(
+            f"update_kpi nhận trường không được phép: {sorted(unknown)}"
+        )
 
     for field, value in changes.items():
         setattr(kpi, field, value)
