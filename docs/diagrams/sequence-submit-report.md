@@ -109,12 +109,12 @@ sequenceDiagram
 
 ## Còn lại, đã ghi nhận chứ chưa sửa
 
-1. **Check-then-insert.** Spec §5 + §7.1 nói ràng buộc trùng tuần là
-   `UNIQUE (employee_id, week_start)` và "vi phạm trả 409"; code kiểm bằng `SELECT` trước
-   (`extraction.py:114`) rồi mới `INSERT`. Hai request đồng thời lọt qua cả hai lần `SELECT`,
-   và request thua cuộc nhận `IntegrityError` không được bắt → **500 thay vì 409**.
-   `services/employee.py` có đúng cùng dạng này với email trùng. Đã ghi vào mục
-   "Hạn chế đã biết" của README kèm cách sửa đúng; MVP chấp nhận đánh đổi.
-2. **`routers/reports.py:29` tự kiểm `db.get(Employee, ...)`** và tự ném `NotFoundError` —
-   một quyết định nghiệp vụ nằm trong router, giống ba router CRUD trước khi được tách.
-   Để ngoài phạm vi lần này vì nó nằm trên đường trích xuất.
+- **Check-then-insert.** Spec §5 + §7.1 nói ràng buộc trùng tuần là
+  `UNIQUE (employee_id, week_start)` và "vi phạm trả 409"; code kiểm bằng `SELECT` trước
+  (`extraction.py:114`) rồi mới `INSERT`. Hai request đồng thời lọt qua cả hai lần `SELECT`,
+  và request thua cuộc nhận `IntegrityError` không được bắt → **500 thay vì 409**.
+  `services/employee.py` có đúng cùng dạng này với email trùng. Đã ghi vào mục
+  "Hạn chế đã biết" của README kèm cách sửa đúng; MVP chấp nhận đánh đổi.
+- **`routers/reports.py:29` tự kiểm `db.get(Employee, ...)`** và tự ném `NotFoundError` —
+  một quyết định nghiệp vụ nằm trong router, giống ba router CRUD trước khi được tách.
+  Để ngoài phạm vi lần này vì nó nằm trên đường trích xuất.

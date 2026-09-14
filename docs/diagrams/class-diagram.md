@@ -22,6 +22,8 @@ classDiagram
         +date period_start
         +date period_end
         +datetime created_at
+        +CHECK period_end >= period_start
+        +CHECK target_value > 0
     }
 
     class Task {
