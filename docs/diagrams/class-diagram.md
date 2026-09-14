@@ -158,9 +158,9 @@ classDiagram
 ## Chỗ đã đồng bộ
 
 1. `kpi_progress_entries.source_suggestion_id` — code khai báo `nullable=True`
-   (`models.py:196`), spec §5 trước đây viết như thể bắt buộc. **Đã sửa spec theo code:**
+   (`models.py:204`), spec §5 trước đây viết như thể bắt buộc. **Đã sửa spec theo code:**
    §5 giờ ghi `(nullable, → kpi_update_suggestions.id)` kèm lý do. Sơ đồ vẽ `0..1`, đúng.
-2. `employees.email UNIQUE` — code có `unique=True` (`models.py:63`), spec §5 trước đây
+2. `employees.email UNIQUE` — code có `unique=True` (`models.py:64`), spec §5 trước đây
    không nêu. **Đã sửa spec theo code.**
 3. `period_end >= period_start` và `target_value > 0` — spec §5 đòi, `models.py` trước đây
    không có `CheckConstraint` nào và hai ràng buộc chỉ sống ở tầng Pydantic.
