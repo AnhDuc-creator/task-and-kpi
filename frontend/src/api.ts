@@ -69,6 +69,7 @@ export const createEmployee = (payload: EmployeeCreate) =>
   request<Employee>('/api/employees', 'POST', payload)
 
 export const listKpis = () => request<Kpi[]>('/api/kpis')
+export const getKpi = (id: number) => request<Kpi>(`/api/kpis/${id}`)
 export const createKpi = (payload: KpiCreate) => request<Kpi>('/api/kpis', 'POST', payload)
 export const updateKpi = (id: number, payload: KpiPatch) =>
   request<Kpi>(`/api/kpis/${id}`, 'PATCH', payload)

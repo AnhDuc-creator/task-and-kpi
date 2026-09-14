@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { ApiError, createEmployee, getDashboard, listEmployees } from '../api'
+import { API_BASE, ApiError, createEmployee, getDashboard, getKpi, listEmployees } from '../api'
 
 function mockFetch(response: Partial<Response> & { json?: () => Promise<unknown> }) {
   const stub = vi.fn().mockResolvedValue(response as Response)
@@ -24,6 +24,18 @@ describe('request thành công', () => {
     expect(init.method).toBe('POST')
     expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json')
     expect(init.body).toBe(JSON.stringify({ name: 'An', email: 'a@b.c' }))
+  })
+
+  it('getKpi gọi GET đúng đường dẫn một KPI', async () => {
+    const stub = mockFetch({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 7, name: 'Doanh thu', target_value: 100 }),
+    })
+
+    await expect(getKpi(7)).resolves.toMatchObject({ id: 7, name: 'Doanh thu' })
+    expect(stub.mock.calls[0][0]).toBe(`${API_BASE}/api/kpis/7`)
+    expect((stub.mock.calls[0][1] as RequestInit).method).toBe('GET')
   })
 })
 
