@@ -174,3 +174,45 @@ def test_progress_entries_accumulate(db_session):
 
     total = sum(entry.delta_value for entry in kpi.progress_entries)
     assert total == 15.5
+
+
+def test_inverted_period_is_rejected_by_db(db_session):
+    """Ràng buộc spec §5 phải sống ở tầng DB, không chỉ ở Pydantic — SQL thô
+    hay seed data ghi thẳng vào DB cũng không được lách."""
+    employee = Employee(name="H", email="h@example.com")
+    db_session.add(employee)
+    db_session.flush()
+
+    db_session.add(
+        Kpi(
+            name="Ky nguoc",
+            target_value=10.0,
+            unit="cai",
+            owner_id=employee.id,
+            period_start=date(2026, 12, 31),
+            period_end=date(2026, 1, 1),
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+
+
+def test_non_positive_target_is_rejected_by_db(db_session):
+    employee = Employee(name="I", email="i@example.com")
+    db_session.add(employee)
+    db_session.flush()
+
+    db_session.add(
+        Kpi(
+            name="Muc tieu bang 0",
+            target_value=0.0,
+            unit="cai",
+            owner_id=employee.id,
+            period_start=date(2026, 1, 1),
+            period_end=date(2026, 12, 31),
+        )
+    )
+
+    with pytest.raises(IntegrityError):
+        db_session.commit()

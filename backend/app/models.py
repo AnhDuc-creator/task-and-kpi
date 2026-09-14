@@ -6,6 +6,7 @@ import enum
 from datetime import date, datetime, timezone
 
 from sqlalchemy import (
+    CheckConstraint,
     Date,
     DateTime,
     Enum,
@@ -66,6 +67,13 @@ class Employee(Base):
 
 class Kpi(Base):
     __tablename__ = "kpis"
+    __table_args__ = (
+        # Ràng buộc của spec §5, đặt ở tầng DB chứ không chỉ ở Pydantic: SQL thô
+        # hoặc seed data ghi thẳng vào DB cũng không lách được. Dự án dùng
+        # create_all chứ không có migration, nên DB cũ phải tạo lại mới có.
+        CheckConstraint("period_end >= period_start", name="ck_kpis_period_order"),
+        CheckConstraint("target_value > 0", name="ck_kpis_target_positive"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(300))
