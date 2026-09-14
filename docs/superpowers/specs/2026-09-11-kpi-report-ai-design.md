@@ -69,6 +69,9 @@ Nguyên tắc phân tách:
 ### employees
 `id, name, email, created_at`
 
+**Ràng buộc UNIQUE `email`** — mỗi nhân viên một địa chỉ. Vi phạm trả HTTP 409,
+cùng luật mã lỗi với mục 7.1.
+
 ### kpis
 `id, name, target_value (float), unit (str), owner_id → employees.id,
 period_start (date), period_end (date), created_at`
@@ -105,8 +108,13 @@ final_task_id (nullable, → tasks.id), reviewed_at (nullable), created_at`
 `id, report_id → weekly_reports.id, description, related_kpi_id (nullable, → kpis.id)`
 
 ### kpi_progress_entries
-`id, kpi_id → kpis.id, delta_value (float), source_suggestion_id → kpi_update_suggestions.id,
+`id, kpi_id → kpis.id, delta_value (float),
+source_suggestion_id (nullable, → kpi_update_suggestions.id),
 effective_date (date), created_at`
+
+`source_suggestion_id` để `nullable` vì sổ cái còn phải chứa được những dòng
+không sinh ra từ một đề xuất (số liệu nhập tay, seed data, dữ liệu nhập trước
+khi có luồng duyệt). Đường duyệt thì luôn điền nó — xem mục 7.4.
 
 ### Quy ước
 
@@ -207,10 +215,19 @@ Bước 2 và bước 3 nằm trong **một giao dịch duy nhất**: đổi `st
 trạng thái suggestion đã `approved` mà sổ cái thiếu dòng tương ứng, hay ngược lại.
 
 `final_kpi_id` bắt buộc phải khác `null` khi duyệt — đây là chỗ quản lý gán KPI
-cho những đề xuất LLM trả về `kpi_id = null`.
+cho những đề xuất LLM trả về `kpi_id = null`. Ràng buộc này không phải một lệnh
+`if` riêng: nó đến từ kiểu `final_kpi_id: int` (không `| None`) trong
+`KpiApproveIn`, nên gửi `null` qua HTTP bị Pydantic chặn thành **422**. Gọi thẳng
+`approve_kpi_suggestion(...)` ở tầng service với `final_kpi_id=None` thì chỉ bị
+chặn gián tiếp — `db.get(Kpi, None)` trả `None` → `NotFoundError` → 404, không
+phải 422.
 
 `final_delta` bắt buộc phải là số hữu hạn; một giá trị không hữu hạn (vô cực
-hoặc NaN) bị từ chối với **HTTP 422** và không mutation nào được thực hiện.
+hoặc NaN) bị từ chối với **HTTP 422** và không mutation nào được thực hiện. Ràng
+buộc này có **hai** cổng: `allow_inf_nan=False` trên `KpiApproveIn` ở biên HTTP,
+và `math.isfinite(final_delta)` trong `approve_kpi_suggestion`. Cổng thứ hai ném
+`InvalidInputError` (cũng ra 422) và tồn tại để đường gọi service trực tiếp —
+không qua HTTP — cũng không lách được.
 
 `POST /api/suggestions/kpi/{id}/reject`: đặt `status = rejected`, không sinh dòng
 sổ cái nào.
@@ -252,19 +269,34 @@ class LlmProvider(Protocol):
 
 `task_id`, `kpi_id`, `related_kpi_id` được phép `null` khi LLM không chắc.
 
-Validator từ chối:
+`validate_extraction_result` (ở `llm/base.py`, được `services/extraction.py` gọi
+sau **mọi** provider) từ chối:
 
 - `kpi_id` / `task_id` / `related_kpi_id` không `null` nhưng không nằm trong catalog đã gửi.
 - `delta_value` không phải số hữu hạn (NaN, vô cực).
-- JSON không parse được hoặc thiếu khoá bắt buộc.
 
-Mọi trường hợp trượt đều dẫn tới `extraction_status = failed` như mục 7.2.
+JSON không parse được hoặc thiếu khoá bắt buộc **không** đi qua validator này —
+tới lượt nó chạy thì đã có sẵn một `ExtractionResult` hợp lệ trong tay. Hai ca đó
+bị chặn sớm hơn, ở hai chỗ khác nhau:
+
+- JSON hỏng, lỗi SDK, `stop_reason == "refusal"` → `AnthropicProvider` bọc mọi
+  `Exception` của SDK thành `ExtractionError`.
+- Thiếu khoá bắt buộc → Pydantic ném `ValidationError` ngay khi dựng `ExtractionResult`.
+
+`run_extraction` bắt cả `ExtractionError` lẫn `ValidationError`, nên mọi trường
+hợp trượt vẫn dẫn tới `extraction_status = failed` như mục 7.2 — giống kết quả,
+khác đường đi.
 
 ### Các provider
 
-- **MockProvider** — mặc định, không dùng mạng. Khớp từ khoá tên KPI/Task trong
-  catalog và bắt số bằng regex; đủ thật để test trọn vòng có ý nghĩa. Nhận được
-  kịch bản đóng sẵn khi unit test cần một kết quả cụ thể (kể cả kết quả hỏng).
+- **MockProvider** — mặc định (`name = "mock"`), không dùng mạng. Khớp từ khoá tên
+  KPI/Task trong catalog và bắt số bằng regex; đủ thật để test trọn vòng có ý nghĩa.
+  Không nhận kịch bản nào.
+- **ScriptedProvider** — lớp riêng (`name = "scripted"`) trong cùng `llm/mock.py`,
+  chỉ dùng cho unit test: nhận sẵn một `result` hoặc một `error` và trả/ném đúng
+  thứ đó. Tách khỏi `MockProvider` để đường mặc định không phải mang thêm một
+  nhánh "nếu có kịch bản thì..." mà chỉ test mới đi qua. `factory.get_provider`
+  không bao giờ trả về nó — test tự dựng và tiêm qua `dependency_overrides`.
 - **AnthropicProvider** — SDK `anthropic`, model `claude-sonnet-5`, ép JSON đúng
   schema bằng **structured outputs**: `client.messages.parse(...,
   output_format=ExtractionResult)` trả về `response.parsed_output` đã là một
@@ -289,8 +321,15 @@ POST             /api/suggestions/kpi/{id}/approve   # body: final_kpi_id, final
 POST             /api/suggestions/kpi/{id}/reject
 POST             /api/suggestions/task/{id}/approve  # body: final_task_id
 POST             /api/suggestions/task/{id}/reject
-GET              /api/dashboard                      # mỗi KPI: actual, target, percent, expected, status
+GET              /api/dashboard                      # mỗi KPI: một DashboardItemOut, xem bên dưới
 ```
+
+`GET /api/dashboard` trả cho mỗi KPI một `DashboardItemOut` gồm số liệu đánh giá
+(`actual_value`, `target_value`, `expected_value`, `percent_complete`, `status`,
+`at_risk`) **và** ngữ cảnh hiển thị (`kpi_id`, `kpi_name`, `unit`, `owner_name`,
+`period_start`, `period_end`) — cùng lý do với `GET /api/suggestions`: trang
+Dashboard vẽ được một hàng đầy đủ mà không phải gọi thêm API nào. Trang này dùng
+hết cả tập đó.
 
 `GET /api/suggestions` trả **hai danh sách tách riêng** (`kpi_updates` và
 `task_completions`) chứ không trộn chung, vì hai loại có hình dạng và thao tác
