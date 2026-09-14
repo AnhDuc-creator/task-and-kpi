@@ -118,3 +118,8 @@ sequenceDiagram
 - **`routers/reports.py:29` tự kiểm `db.get(Employee, ...)`** và tự ném `NotFoundError` —
   một quyết định nghiệp vụ nằm trong router, giống ba router CRUD trước khi được tách.
   Để ngoài phạm vi lần này vì nó nằm trên đường trích xuất.
+- **`services/extraction.py` chưa theo idiom giao dịch chung của tầng service.**
+  Năm module service còn lại (`approval.py`, `employee.py`, `kpi.py`, `task.py`) đều bọc
+  `db.commit()` trong `try` / `except` → `rollback` → `raise`; ba lệnh `db.commit()` ở
+  `extraction.py:101,127,180` thì commit trần, không có khối đó. Ghi nhận là module
+  duy nhất lệch khỏi mẫu này, chưa sửa trong lần này.

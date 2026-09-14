@@ -73,4 +73,7 @@ lần chạy vừa rồi.
   `Base.metadata.create_all` chứ không có migration, nên hai ràng buộc
   `period_end >= period_start` và `target_value > 0` trên bảng `kpis` chỉ tồn tại
   trong database được tạo sau thay đổi này. Một file `kpi.db` cũ phải xoá đi cho
-  tạo lại mới có chúng.
+  tạo lại mới có chúng. SQLite không có `ALTER TABLE ADD CONSTRAINT`, nên không
+  có đường nâng cấp tại chỗ: nếu dữ liệu cũ còn giá trị, phải build lại bảng
+  bằng tay (tạo bảng mới, copy dữ liệu, xoá bảng cũ, đổi tên) thay vì chỉ xoá
+  `kpi.db`.

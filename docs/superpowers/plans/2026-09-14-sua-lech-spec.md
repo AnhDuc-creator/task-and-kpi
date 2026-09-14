@@ -927,7 +927,14 @@ npm test
 git status --short
 ```
 
-Kỳ vọng: `build` xong không lỗi, `26 passed`, và `git status` chỉ thấy `tsconfig.json` + `tsconfig.node.json` — **không** có `tsconfig.node.tsbuildinfo` hay `vite.config.d.ts`. Nếu có file rác, xoá nó và bỏ `composite: true` ra khỏi `tsconfig.node.json`.
+Kỳ vọng: `build` xong không lỗi, `26 passed`. `git status` sẽ thấy `tsconfig.json` +
+`tsconfig.node.json`, và nếu `npm run build` sau này chạy `tsc -p tsconfig.node.json`
+thì cả `tsconfig.node.tsbuildinfo` — file đó là **kỳ vọng đúng**, không phải rác:
+`composite: true` kéo theo `incremental`, nên TypeScript ghi file này ngay cả dưới
+`--noEmit`. `.gitignore` đã có mục `*.tsbuildinfo` để xử lý, nên không cần xoá gì
+cũng không được bỏ `composite: true` — bỏ nó sẽ làm hỏng liên kết `references` mà
+Step 2 vừa thêm (`tsc` báo lỗi TS6306: composite phải bật để một project khác
+reference tới nó).
 
 - [ ] **Step 4: Kiểm rằng file mới thật sự có tác dụng**
 
@@ -1104,7 +1111,8 @@ bằng:
 GET              /api/dashboard                      # mỗi KPI: một DashboardItemOut, xem bên dưới
 ```
 
-Rồi thêm đoạn này ngay trước đoạn "Quy ước mã lỗi:":
+Rồi thêm đoạn này ngay sau khối endpoint (không phải ngay trước đoạn "Quy ước mã
+lỗi:" — xem ghi chú bên dưới):
 
 ```
 `GET /api/dashboard` trả cho mỗi KPI một `DashboardItemOut` gồm số liệu đánh giá
@@ -1114,6 +1122,12 @@ Rồi thêm đoạn này ngay trước đoạn "Quy ước mã lỗi:":
 Dashboard vẽ được một hàng đầy đủ mà không phải gọi thêm API nào. Trang này dùng
 hết cả tập đó.
 ```
+
+Vị trí đặt đoạn này là có chủ đích: ngay sau khối endpoint, không phải ngay
+trước "Quy ước mã lỗi:". Dòng endpoint sửa ở trên viết "xem bên dưới", và đoạn
+`DashboardItemOut` phải là đoạn văn kế tiếp ngay sau đó để "bên dưới" trỏ đúng
+chỗ; nếu đặt ngay trước "Quy ước mã lỗi:" thì đoạn `GET /api/suggestions` (giữ
+nguyên) sẽ chen vào giữa, và "xem bên dưới" sẽ trỏ sai.
 
 - [ ] **Step 7: Viết lại mục "Chỗ code lệch với spec" trong `docs/diagrams/class-diagram.md`**
 
