@@ -6,6 +6,7 @@ __pycache__/
 node_modules/
 dist/
 *.db
+*.tsbuildinfo
 .superpowers/
 .claude/worktrees/
 *.egg-info/
