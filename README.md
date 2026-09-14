@@ -56,3 +56,21 @@ chạy** và in cảnh báo tên cổng + PID — hãy tự giải phóng cổng
 lại, thay vì để script kill nhầm tiến trình của bạn. Sau khi chạy xong,
 nếu gặp tiến trình lạ thì script chỉ cảnh báo chứ không đổi kết quả của
 lần chạy vừa rồi.
+
+## Hạn chế đã biết
+
+- **Check-then-insert: hai request đồng thời cho 500 thay vì 409.**
+  `POST /api/employees` (email trùng) và `POST /api/reports` (trùng
+  `employee_id` + `week_start`) đều kiểm bằng một `SELECT` trước rồi mới `INSERT`.
+  Ràng buộc `UNIQUE` ở tầng DB vẫn là lưới đỡ cuối cùng, nhưng hai request đến
+  cùng lúc sẽ cùng lọt qua vòng `SELECT`; request thua cuộc nhận `IntegrityError`
+  không được bắt và thoát ra thành **HTTP 500** thay vì **409** như spec quy định.
+  Với một tổ nhỏ nhập liệu bằng tay thì xác suất này gần bằng không nên MVP chấp
+  nhận đánh đổi; cách sửa đúng là bắt `IntegrityError` quanh `commit` rồi dịch
+  thành `ConflictError`, và bỏ hẳn vòng `SELECT` kiểm trước.
+
+- **`CheckConstraint` chỉ áp cho database tạo mới.** Dự án dùng
+  `Base.metadata.create_all` chứ không có migration, nên hai ràng buộc
+  `period_end >= period_start` và `target_value > 0` trên bảng `kpis` chỉ tồn tại
+  trong database được tạo sau thay đổi này. Một file `kpi.db` cũ phải xoá đi cho
+  tạo lại mới có chúng.
